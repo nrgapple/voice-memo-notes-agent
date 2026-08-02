@@ -200,6 +200,15 @@ private struct WorkflowResult: Codable {
     }
 }
 
+private func processingStartedNotificationPayload(recordingCount: Int) -> ImportNotificationPayload {
+    let subject = recordingCount == 1 ? "A new voice memo was" : "\(recordingCount) new voice memos were"
+    return ImportNotificationPayload(
+        title: "Voice memo found",
+        message: "\(subject) found and processing has started.",
+        url: nil
+    )
+}
+
 private func reviewNotificationPayload(from review: WorkflowReview) -> ImportNotificationPayload {
     let notes = review.affectedNotes.joined(separator: ", ")
     let shortSHA = String(review.commitSHA.prefix(12))
@@ -476,6 +485,40 @@ private func sendFailureNotification(
     }
 }
 
+private func sendProcessingStartedNotification(
+    recordingCount: Int,
+    runID: String,
+    logger: AgentLogger
+) {
+    do {
+        let notifier = PushoverNotifier()
+        if try notifier.configured() {
+            let notificationStarted = Date()
+            let requestID = try notifier.send(
+                processingStartedNotificationPayload(recordingCount: recordingCount)
+            )
+            logger.write("notification-sent", fields: [
+                "provider": "pushover", "request_id": requestID,
+                "recording_count": recordingCount, "run_id": runID,
+                "kind": "processing-started",
+                "duration_ms": Int(Date().timeIntervalSince(notificationStarted) * 1000),
+            ])
+        } else {
+            logger.write("notification-skipped", fields: [
+                "provider": "pushover", "reason": "not-configured",
+                "recording_count": recordingCount, "run_id": runID,
+                "kind": "processing-started",
+            ])
+        }
+    } catch {
+        logger.write("notification-failed", fields: [
+            "provider": "pushover", "recording_count": recordingCount,
+            "run_id": runID, "kind": "processing-started",
+            "error": String(describing: error),
+        ])
+    }
+}
+
 private struct SyncConfiguration {
     let codexPath: String
     let ghPath: String
@@ -586,6 +629,13 @@ private final class SyncRunner {
             try process.run()
             try? progressPipe?.fileHandleForWriting.close()
             let deadline = Date().addingTimeInterval(TimeInterval(configuration.syncTimeoutSeconds))
+            if !recordingFiles.isEmpty {
+                sendProcessingStartedNotification(
+                    recordingCount: recordingFiles.count,
+                    runID: runID,
+                    logger: logger
+                )
+            }
             while process.isRunning && Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.2)
             }
@@ -1354,6 +1404,21 @@ private func runNotificationPreview() throws {
     ])
 }
 
+private func runProcessingStartedNotificationPreview() throws {
+    let recordingCount = try intValue("--recording-count", default: 1)
+    guard recordingCount > 0 else {
+        throw AgentError.message("--recording-count must be greater than zero")
+    }
+    let payload = processingStartedNotificationPayload(recordingCount: recordingCount)
+    printJSON([
+        "message": payload.message,
+        "ok": true,
+        "should_notify": true,
+        "title": payload.title,
+        "url": payload.url ?? NSNull(),
+    ])
+}
+
 private func runRenameRowScore() throws {
     let description = try requiredValue("--description")
     let score = renameRowScore(
@@ -1395,6 +1460,7 @@ private func printHelp() {
     print("  configure-pushover | pushover-status | pushover-test")
     print("  notification-preview --workflow-json JSON")
     print("  demo-log-preview --demo-log-path PATH [--demo-log-interval-ms N]")
+    print("  processing-started-notification-preview [--recording-count N]")
     print("  rename-row-score --description TEXT [--recorded-at DATE] [--duration SECONDS]")
     print("  --memo-id ID --current-title TITLE --new-title TITLE")
     print("  --check-accessibility | --request-accessibility")
@@ -1422,6 +1488,8 @@ do {
         try runNotificationPreview()
     } else if hasArgument("demo-log-preview") {
         try runDemoLogPreview()
+    } else if hasArgument("processing-started-notification-preview") {
+        try runProcessingStartedNotificationPreview()
     } else if hasArgument("rename-row-score") {
         try runRenameRowScore()
     } else if hasArgument("watch") {
