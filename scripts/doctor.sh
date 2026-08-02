@@ -18,7 +18,6 @@ AGENT_KEYCHAIN="${CODEX_ROOT}/tools/voice-memo-agent/signing/voice-memo-agent.ke
 AGENT_BUNDLE_ID="${VOICE_MEMO_AGENT_BUNDLE_ID:-com.nrgapple.VoiceMemoAgent}"
 LAUNCH_AGENT_LABEL="${VOICE_MEMO_AGENT_LAUNCH_LABEL:-${AGENT_BUNDLE_ID}}"
 LAUNCH_AGENT="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
-PROJECT_VERSION="$(<"${SKILL_DIR}/VERSION")"
 RECORDINGS_DIR="${HOME}/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings"
 PUSHOVER_CREDENTIALS_FILE="${VOICE_MEMO_PUSHOVER_CREDENTIALS_FILE:-${HOME}/.config/voice-memo-agent/pushover.json}"
 if [[ -n "${VOICE_MEMO_NODE_PATH:-}" ]]; then
@@ -80,8 +79,8 @@ check "speech-helper-metadata" zsh -c "otool -l '${TOOL_DIR}/.codex-build/VoiceM
 check "speech-helper-cli" "${TOOL_DIR}/.codex-build/VoiceMemoTranscriber" --help
 check "agent-binary" test -x "${AGENT_PATH}"
 check "agent-signature" codesign --verify --strict "${AGENT_APP}"
-agent_source_hash="$(shasum -a 256 "${SKILL_DIR}/scripts/VoiceMemoAgent.swift" | awk '{print $1}')"
-check "agent-source-version" zsh -c "test \"\$(cat '${AGENT_APP}/Contents/Resources/source-sha256')\" = '${PROJECT_VERSION}:${agent_source_hash}'"
+agent_fingerprint="$("${SKILL_DIR}/scripts/build_app.sh" --fingerprint)"
+check "agent-source-version" zsh -c "test \"\$(cat '${AGENT_APP}/Contents/Resources/source-sha256')\" = '${agent_fingerprint}'"
 if [[ -n "${VOICE_MEMO_SIGNING_IDENTITY:-}" ]]; then
   check "agent-signing-identity" zsh -c "codesign -dvv '${AGENT_APP}' 2>&1 | rg -Fq 'Authority=${VOICE_MEMO_SIGNING_IDENTITY}'"
 else

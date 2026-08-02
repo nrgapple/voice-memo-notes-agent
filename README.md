@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/VoiceMemoAgent.icon.png" width="160" height="160" alt="Voice Memo Agent icon">
+</p>
+
 # Voice Memo Notes Agent
 
 An event-driven macOS workflow that turns selected Apple Voice Memos into contextual notes in a private Markdown/Foam vault.
@@ -54,6 +58,16 @@ flowchart LR
 - A dedicated private GitHub notes repository with a checked-out default branch
 
 The bootstrap pins [`apple-voice-memo-mcp`](https://github.com/jwulff/apple-voice-memo-mcp) to Git commit `f34437f546f17c78989b6e1a248d452829e50754` (whose package manifest is `0.1.0`), plus the compatibility patch stored in this repository.
+
+## Builds
+
+Every pull request produces ad hoc-signed Apple Silicon, Intel, and universal macOS app archives. Published releases attach the same three archives, a SHA-256 checksum manifest, and GitHub build-provenance attestations. The checked-in icon source and `.icns` bundle live in [`assets/`](assets/).
+
+These CI builds are for inspection and testing. They are not Developer ID signed or Apple notarized, so Gatekeeper-ready production installation still uses the source bootstrap and its persistent local signing identity. Build locally with:
+
+```bash
+./scripts/build_app.sh --output-dir dist --architecture universal --archive
+```
 
 ## Install
 
@@ -174,7 +188,7 @@ More detail is available in [`SKILL.md`](SKILL.md) and [`references/`](reference
 
 ## Public Release Status
 
-This is a source-only public beta under the MIT License. There is no notarized binary distribution, hosted service, or support SLA. Production use requires a private test vault, successful fixture and live harness runs, a reviewed canary memo, backup and branch-protection policies for the notes repository, and monitoring of LaunchAgent/Pushover failures. See [`RELEASING.md`](RELEASING.md), [`SECURITY.md`](SECURITY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+This is a public beta under the MIT License with source and ad hoc-signed CI build artifacts. There is no Developer ID-notarized binary, hosted service, or support SLA. Production use requires a private test vault, successful fixture and live harness runs, a reviewed canary memo, backup and branch-protection policies for the notes repository, and monitoring of LaunchAgent/Pushover failures. See [`RELEASING.md`](RELEASING.md), [`SECURITY.md`](SECURITY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 To remove the app, LaunchAgent, and skill link while preserving notes, local state, credentials, signing identity, and MCP checkout:
 

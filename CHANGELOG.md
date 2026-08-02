@@ -2,6 +2,11 @@
 
 All notable changes are documented here. The project follows Semantic Versioning while its public API and configuration are under active development.
 
+## 0.1.0-beta.2 - 2026-08-02
+
+- Add a repository-owned macOS icon and deterministic `.icns` generation.
+- Add ad hoc-signed Apple Silicon, Intel, and universal app builds with checksums and provenance attestations.
+
 ## 0.1.0-beta.1 - 2026-08-02
 
 - Add the signed event-driven Voice Memo Agent and deterministic import coordinator.
