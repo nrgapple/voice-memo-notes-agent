@@ -1,0 +1,7 @@
+interface:
+  display_name: "Sync Voice Memos to Notes"
+  short_description: "Integrate new Voice Memos into a notes vault"
+  default_prompt: "Use $sync-voice-memos-to-notes in scheduled-sync mode."
+
+policy:
+  allow_implicit_invocation: true

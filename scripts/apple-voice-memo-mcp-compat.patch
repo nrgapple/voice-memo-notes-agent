@@ -1,0 +1,119 @@
+diff --git a/src/services/voice-memo-db.ts b/src/services/voice-memo-db.ts
+index 35f570d..4648f75 100644
+--- a/src/services/voice-memo-db.ts
++++ b/src/services/voice-memo-db.ts
+@@ -32,11 +32,11 @@ export class VoiceMemoDatabase {
+ 
+     return {
+       id: row.Z_PK,
+-      title: row.ZENCRYPTEDTITLE || row.ZPATH,
++      title: row.ZENCRYPTEDTITLE || row.ZPATH || `Voice Memo ${row.Z_PK}`,
+       customLabel: row.ZCUSTOMLABEL,
+       date: coreDataToISO(row.ZDATE),
+       duration: row.ZDURATION,
+-      path: row.ZPATH,
++      path: row.ZPATH || "",
+       fullPath: fullPath || "",
+       hasTranscript: fullPath ? hasTranscript(fullPath) : false,
+     };
+diff --git a/src/types/index.ts b/src/types/index.ts
+index 1bd64cc..97d78b2 100644
+--- a/src/types/index.ts
++++ b/src/types/index.ts
+@@ -42,7 +42,7 @@ export interface TranscriptionResult {
+ // Raw database row from CloudRecordings.db
+ export interface CloudRecordingRow {
+   Z_PK: number;
+-  ZPATH: string;
++  ZPATH: string | null;
+   ZCUSTOMLABEL: string | null;
+   ZENCRYPTEDTITLE: string | null;
+   ZDATE: number; // Core Data timestamp
+diff --git a/src/tools/get-memo.ts b/src/tools/get-memo.ts
+index 4346c0f..ca40847 100644
+--- a/src/tools/get-memo.ts
++++ b/src/tools/get-memo.ts
+@@ -25,7 +25,7 @@ export async function getMemo(
+   return JSON.stringify(
+     {
+       id: memo.id,
+-      title: memo.customLabel || memo.title,
++      title: memo.title,
+       customLabel: memo.customLabel,
+       originalTitle: memo.title,
+       date: memo.date,
+diff --git a/src/tools/get-transcript.ts b/src/tools/get-transcript.ts
+index c85a77e..2c3e023 100644
+--- a/src/tools/get-transcript.ts
++++ b/src/tools/get-transcript.ts
+@@ -45,7 +45,7 @@ export async function getTranscript(
+   if (format === "text") {
+     return JSON.stringify({
+       id: memo.id,
+-      title: memo.customLabel || memo.title,
++      title: memo.title,
+       text: transcript.text,
+       locale: transcript.locale,
+     });
+@@ -53,7 +53,7 @@ export async function getTranscript(
+ 
+   return JSON.stringify({
+     id: memo.id,
+-    title: memo.customLabel || memo.title,
++    title: memo.title,
+     text: transcript.text,
+     segments: transcript.segments,
+     locale: transcript.locale,
+   });
+diff --git a/src/tools/list-memos.ts b/src/tools/list-memos.ts
+index f4ded7d..1a950ad 100644
+--- a/src/tools/list-memos.ts
++++ b/src/tools/list-memos.ts
+@@ -35,7 +35,7 @@ export async function listMemos(
+     {
+       memos: result.memos.map((memo) => ({
+         id: memo.id,
+-        title: memo.customLabel || memo.title,
++        title: memo.title,
+         date: memo.date,
+         duration: memo.duration,
+         hasTranscript: memo.hasTranscript,
+diff --git a/src/tools/transcribe.ts b/src/tools/transcribe.ts
+index 2bb7fdd..b37d069 100644
+--- a/src/tools/transcribe.ts
++++ b/src/tools/transcribe.ts
+@@ -33,7 +33,7 @@ export async function transcribeMemo(
+   if (memo.hasTranscript) {
+     return JSON.stringify({
+       id: memo.id,
+-      title: memo.customLabel || memo.title,
++      title: memo.title,
+       alreadyTranscribed: true,
+       message:
+         "This memo already has a transcript. Use get_transcript to retrieve it.",
+@@ -53,7 +53,7 @@ export async function transcribeMemo(
+ 
+   return JSON.stringify({
+     id: memo.id,
+-    title: memo.customLabel || memo.title,
++    title: memo.title,
+     success: true,
+     transcript: result.transcript,
+     segments: result.segments,
+diff --git a/src/utils/paths.ts b/src/utils/paths.ts
+index ae7dc5a..f1392aa 100644
+--- a/src/utils/paths.ts
++++ b/src/utils/paths.ts
+@@ -41,7 +41,11 @@ export function getDatabasePath(): string | null {
+   return null;
+ }
+ 
+-export function getAudioFilePath(filename: string): string | null {
++export function getAudioFilePath(filename: string | null): string | null {
++  if (!filename) {
++    return null;
++  }
++
+   const recordingsPath = getVoiceMemosPath();
+   if (!recordingsPath) {
+     return null;
