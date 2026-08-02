@@ -15,8 +15,6 @@ MCP_NAME="apple-voice-memos"
 AGENT_BUNDLE_ID="${VOICE_MEMO_AGENT_BUNDLE_ID:-com.nrgapple.VoiceMemoAgent}"
 LAUNCH_AGENT_LABEL="${VOICE_MEMO_AGENT_LAUNCH_LABEL:-${AGENT_BUNDLE_ID}}"
 LAUNCH_AGENT="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
-PROJECT_VERSION="$(<"${SKILL_DIR}/VERSION")"
-PROJECT_VERSION_CORE="${PROJECT_VERSION%%-*}"
 if [[ -n "${VOICE_MEMO_NODE_PATH:-}" ]]; then
   NODE_PATH="${VOICE_MEMO_NODE_PATH}"
 elif [[ -x /opt/homebrew/bin/node ]]; then
@@ -160,45 +158,27 @@ swiftc -parse-as-library -O \
   -Xlinker __info_plist \
   -Xlinker "${helper_plist}"
 
-agent_source_hash="$(shasum -a 256 "${SKILL_DIR}/scripts/VoiceMemoAgent.swift" | awk '{print $1}')"
-agent_fingerprint="${PROJECT_VERSION}:${agent_source_hash}"
+agent_fingerprint="$("${SKILL_DIR}/scripts/build_app.sh" --fingerprint)"
 if [[ -n "${VOICE_MEMO_SIGNING_IDENTITY:-}" ]]; then
   signing_identity="${VOICE_MEMO_SIGNING_IDENTITY}"
-  signing_arguments=(--force --sign "${signing_identity}")
+  builder_signing_arguments=(--sign-identity "${signing_identity}")
 else
   signing_identity="$("${SKILL_DIR}/scripts/setup_signing_identity.sh")"
-  signing_arguments=(--force --sign "${signing_identity}" --keychain "${signing_keychain}")
+  builder_signing_arguments=(--sign-identity "${signing_identity}" --keychain "${signing_keychain}")
 fi
 if [[ -x "${agent_path}" && -f "${agent_marker}" && "$(<"${agent_marker}")" == "${agent_fingerprint}" ]]; then
   print "Voice Memo Agent already built for ${agent_fingerprint}"
 else
   agent_temp="${agent_app}.new"
+  agent_build_dir="${agent_app}.build"
   rm -rf "${agent_temp}"
-  mkdir -p "${agent_temp}/Contents/MacOS" "${agent_temp}/Contents/Resources"
-  swiftc -O \
-    "${SKILL_DIR}/scripts/VoiceMemoAgent.swift" \
-    -o "${agent_temp}/Contents/MacOS/VoiceMemoAgent" \
-    -framework AppKit \
-    -framework ApplicationServices \
-    -framework CoreServices
-  cat > "${agent_temp}/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>VoiceMemoAgent</string>
-<key>CFBundleIdentifier</key><string>${AGENT_BUNDLE_ID}</string>
-<key>CFBundleName</key><string>Voice Memo Agent</string>
-<key>CFBundleDisplayName</key><string>Voice Memo Agent</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>CFBundleShortVersionString</key><string>${PROJECT_VERSION_CORE}</string>
-<key>LSUIElement</key><true/>
-</dict></plist>
-PLIST
-  print -n "${agent_fingerprint}" > "${agent_temp}/Contents/Resources/source-sha256"
-  codesign "${signing_arguments[@]}" \
-    --identifier "${AGENT_BUNDLE_ID}" \
-    "${agent_temp}"
+  rm -rf "${agent_build_dir}"
+  "${SKILL_DIR}/scripts/build_app.sh" \
+    --output-dir "${agent_build_dir}" \
+    --architecture native \
+    "${builder_signing_arguments[@]}"
+  mv "${agent_build_dir}/Voice Memo Agent.app" "${agent_temp}"
+  rmdir "${agent_build_dir}"
   rm -rf "${agent_app}"
   mv "${agent_temp}" "${agent_app}"
 fi

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -40,10 +41,34 @@ def main() -> int:
         "LICENSE", "README.md", "SECURITY.md", "CONTRIBUTING.md",
         "CHANGELOG.md", "CODE_OF_CONDUCT.md", "RELEASING.md",
         "THIRD_PARTY_NOTICES.md",
+        "assets/README.md", "assets/VoiceMemoAgent.icon.png", "assets/VoiceMemoAgent.icns",
+        "scripts/build_app.sh", "scripts/build_icon.sh", "scripts/build_release.sh",
     ]
     missing = [name for name in required if not (ROOT / name).is_file()]
     if missing:
         fail(f"missing public project files: {', '.join(missing)}")
+
+    executable_scripts = [
+        "scripts/build_app.sh", "scripts/build_icon.sh", "scripts/build_release.sh",
+    ]
+    not_executable = [name for name in executable_scripts if not (ROOT / name).stat().st_mode & 0o111]
+    if not_executable:
+        fail(f"build scripts are not executable: {', '.join(not_executable)}")
+
+    png = (ROOT / "assets/VoiceMemoAgent.icon.png").read_bytes()
+    if len(png) < 24 or png[:8] != b"\x89PNG\r\n\x1a\n":
+        fail("icon source is not a PNG")
+    width, height = struct.unpack(">II", png[16:24])
+    if (width, height) != (1024, 1024):
+        fail(f"icon source must be 1024x1024 (found {width}x{height})")
+    if (ROOT / "assets/VoiceMemoAgent.icns").read_bytes()[:4] != b"icns":
+        fail("compiled app icon is not an ICNS file")
+
+    for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+        for line_number, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), 1):
+            uses = re.search(r"\buses:\s*[^\s]+@([^\s#]+)", line)
+            if uses and not re.fullmatch(r"[0-9a-f]{40}", uses.group(1)):
+                fail(f"{workflow.relative_to(ROOT)}:{line_number} action is not SHA-pinned")
     print(f"project metadata valid ({version})")
     return 0
 

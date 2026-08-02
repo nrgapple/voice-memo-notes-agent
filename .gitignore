@@ -19,3 +19,5 @@ keychain-password
 certificate.pem
 __pycache__/
 *.pyc
+/dist/
+/dist-release/
