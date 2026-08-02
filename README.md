@@ -52,7 +52,7 @@ flowchart LR
 - Adds a hidden `voice-memo-id` marker for recovery and duplicate prevention.
 - Allows only additive Markdown changes across at most five files per memo.
 - Pushes each memo to a unique review branch by default; after merge, reconciliation records completion without another model call. Existing pre-v4 installations retain direct-push mode until changed.
-- Sends a minimal Pushover notification after success and a privacy-safe memo-ID/stage alert for actionable import failures.
+- Sends a privacy-safe Pushover notification when a newly found memo starts processing, keeps the existing completion notification, and alerts with only the memo ID/stage for actionable import failures.
 - Keeps imports and notifications successful when the Mac is locked, then retries pending renames after wake or session activation.
 
 ## Requirements

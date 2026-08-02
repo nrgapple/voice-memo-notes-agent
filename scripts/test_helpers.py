@@ -884,6 +884,32 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(result["title"], "Voice memo imported")
         self.assertTrue(result["url"].endswith("/commit/85822ec804d5ba962d80c8f22ac93b16ac8919a1"))
 
+    def test_processing_started_notification_is_private(self):
+        result = json.loads(
+            run(
+                str(AGENT),
+                "processing-started-notification-preview",
+                "--recording-count",
+                "1",
+            ).stdout
+        )
+        self.assertTrue(result["should_notify"])
+        self.assertEqual(result["title"], "Voice memo found")
+        self.assertEqual(result["message"], "A new voice memo was found and processing has started.")
+        self.assertNotIn(".m4a", result["message"])
+        self.assertIsNone(result["url"])
+
+    def test_processing_started_notification_pluralizes_batches(self):
+        result = json.loads(
+            run(
+                str(AGENT),
+                "processing-started-notification-preview",
+                "--recording-count",
+                "2",
+            ).stdout
+        )
+        self.assertEqual(result["message"], "2 new voice memos were found and processing has started.")
+
     def test_structured_noop_does_not_notify(self):
         workflow = json.dumps({
             "ok": True,

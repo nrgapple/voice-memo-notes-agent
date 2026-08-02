@@ -18,6 +18,7 @@ Each run must:
 - silently mark recordings without a configured work trigger as ignored;
 - assign each qualified recording a concise descriptive title and queue a best-effort Voice Memos rename;
 - make one commit per memo and push a unique review branch by default;
+- send a privacy-safe processing-started notification after a newly detected recording launches the coordinator, without exposing its filename or content;
 - mark the memo complete only after that commit is merged into the configured target branch, without a second Codex call;
 - remain silent for no-op and active-lease runs;
 - report `memo id`, generated title, affected notes, and commit SHA after success;
