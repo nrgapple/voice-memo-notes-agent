@@ -264,6 +264,10 @@ class Coordinator:
         self.candidate_graph_total_characters = 12000
         self.semantic_prompt_max_characters = 120000
 
+    def demo_progress(self, event: str) -> None:
+        if self.args.demo_progress and self.args.recording_file:
+            print(f"voice-memo-demo:{event}", flush=True)
+
     def sanitize_legacy_log(self) -> None:
         if not self.log_path.is_file():
             return
@@ -922,6 +926,7 @@ Candidate graph context (resolved Foam links only):
         memo_metrics: dict[str, Any],
     ) -> str:
         memo_id = int(memo["id"])
+        self.demo_progress("organizing")
         git_started = time.monotonic()
         self.sync_checkout(memo_id)
         worktree = self.worktrees / f"memo-{memo_id}-{uuid.uuid4().hex[:8]}"
@@ -943,6 +948,7 @@ Candidate graph context (resolved Foam links only):
                 "candidate_characters": candidates.total_characters,
             }
             existing_title = record.get("rename_target")
+            self.demo_progress("drafting")
             output, codex_metrics = self.call_codex(
                 self.semantic_prompt(memo, transcript, matched_phrase, journal_date, candidates, existing_title),
                 memo_id,
@@ -976,6 +982,7 @@ Candidate graph context (resolved Foam links only):
             if validation.returncode:
                 raise SyncError("validation", validation.stdout.strip() or validation.stderr.strip(), memo_id)
             memo_metrics["validation_ms"] = round((time.monotonic() - validation_started) * 1000)
+            self.demo_progress("validated")
 
             publish_started = time.monotonic()
             run(["git", "-C", str(worktree), "commit", "-m", f"Import voice memo {memo_id}: {title}"])
@@ -1031,6 +1038,7 @@ Candidate graph context (resolved Foam links only):
                     "branch": review_branch,
                     "review_url": review_url,
                 })
+                self.demo_progress("review-ready")
                 return "awaiting_review"
 
             run(["git", "-C", str(worktree), "fetch", "origin", self.args.branch])
@@ -1048,6 +1056,7 @@ Candidate graph context (resolved Foam links only):
                 "rename_status": "pending",
                 "metrics": memo_metrics,
             })
+            self.demo_progress("imported")
             run(["git", "-C", str(self.repo), "fetch", "origin", self.args.branch], check=False)
             run(["git", "-C", str(self.repo), "merge", "--ff-only", f"origin/{self.args.branch}"], check=False)
             return "imported"
@@ -1232,6 +1241,7 @@ Candidate graph context (resolved Foam links only):
                         "--recorded-at", str(memo.get("date") or ""),
                         "--duration", str(duration),
                     )
+                    self.demo_progress("listening")
                     transcript_result = self.transcript_for(memo, config["language"])
                     memo_metrics["transcription"] = {
                         "source": transcript_result.source,
@@ -1247,7 +1257,9 @@ Candidate graph context (resolved Foam links only):
                         self.state("ignore", "--id", str(memo_id), "--reason", "missing work trigger")
                         self.result["ignored_count"] += 1
                         outcome = "ignored"
+                        self.demo_progress("ignored")
                         continue
+                    self.demo_progress("qualified")
                     recorded_date = parse_recorded_at(str(memo["date"]))
                     journal_date = resolve_journal_date(recorded_date).isoformat()
                     outcome = self.process_qualified(
@@ -1315,6 +1327,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--run-id")
     result.add_argument("--detected-at")
     result.add_argument("--recording-file", action="append", default=[])
+    result.add_argument("--demo-progress", action="store_true")
     result.add_argument("--result-file", type=Path)
     return result
 

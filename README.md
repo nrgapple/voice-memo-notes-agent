@@ -8,6 +8,12 @@ An event-driven macOS workflow that turns selected Apple Voice Memos into contex
 
 Record on an iPhone, let iCloud sync the memo to the Mac, and say a routing phrase such as **"work note"**, **"for work"**, or **"work memo"**. A locally signed background app detects the recording and runs a deterministic local pipeline. Codex is invoked only after local transcription and exact work-trigger qualification, and only to title and place the note content.
 
+## Demo
+
+[![Watch the Voice Memo Agent process a real memo](assets/voice-memo-agent-demo.png)](assets/voice-memo-agent-demo.mp4)
+
+The MP4 previews the seven explanatory messages emitted during a qualified direct-publish memo run. The linked [VHS tape](assets/voice-memo-agent-demo.tape) records the same stream live; click the image to play the 12-second demo.
+
 ## Architecture
 
 ```mermaid
@@ -122,6 +128,14 @@ Fresh installations use `publish_mode: review`. A qualified memo is pushed to `v
 
 The Mac must be awake and logged in. Import state, logs, cached transcripts, and failures are stored under the notes checkout's `.voice-memo-automation/` directory and excluded with `.git/info/exclude`.
 
+For a terminal demo, trail the separate conversational log before recording a new memo:
+
+```bash
+tail -n 0 -F "$VOICE_MEMO_NOTES_REPO_DIR/.voice-memo-automation/agent-demo.log"
+```
+
+This log stays quiet during startup and reconciliation. A newly detected recording starts a timestamp-free, emoji-led explanation of local transcription, opt-in qualification, note selection, contextual drafting, safety checks, and delivery. Messages are written at least 1.5 seconds apart so they remain readable in VHS captures. It contains no transcript, note content, filename, memo ID, run ID, command output, or credentials; the existing JSONL logs remain unchanged for diagnostics and benchmarks.
+
 ## Notifications
 
 Install Pushover on the iPhone, create a Pushover application, and obtain its User Key and API Token. Then run:
@@ -135,7 +149,7 @@ The first command opens two native prompts. Copy each requested value and click 
 
 Notifications are built from the coordinator's structured JSON. Review mode sends the memo ID, generated title, affected note paths, short commit reference, and GitHub comparison link; after merge, the normal success notification links to the commit. An actionable failure payload contains only the memo ID and failure stage, even when the coordinator exits nonzero; it excludes raw errors, paths, command output, transcript text, and note contents. The first failed import attempt alerts immediately and the third consecutive failure produces one escalation without notifying on every retry. Coordinator launch/result failures and watcher startup failures also produce generic runtime alerts; watcher startup alerts are limited to one per app lifetime. Rename alerts explicitly say the import already succeeded. Notification and rename failures are tracked independently and cannot retry or roll back a completed import.
 
-Each run emits redacted JSONL telemetry with one run ID across watcher, coordinator, Codex, validation, publish, notification, and rename stages. It records timestamps, durations, queue counts, transcript source/cache status, candidate counts/character volume, and Codex token/tool totals. Command stdout, note contents, transcripts, audio, and prompts are never written to logs.
+Each run emits redacted JSONL telemetry with one run ID across watcher, coordinator, Codex, validation, publish, notification, and rename stages. It records timestamps, durations, queue counts, transcript source/cache status, candidate counts/character volume, and Codex token/tool totals. The separate `agent-demo.log` contains only generic conversational status messages. Command stdout, note contents, transcripts, audio, and prompts are never written to logs.
 
 ## Validate
 
