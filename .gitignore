@@ -1,0 +1,21 @@
+.DS_Store
+.env
+.env.*
+*.m4a
+*.wav
+*.aiff
+*.caf
+*.log
+*.keychain
+*.keychain-db
+*.p12
+*.pem
+.codex-build/
+.voice-memo-automation/
+Voice Memo Agent.app/
+node_modules/
+signing/
+keychain-password
+certificate.pem
+__pycache__/
+*.pyc
