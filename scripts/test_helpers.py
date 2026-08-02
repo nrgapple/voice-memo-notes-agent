@@ -623,6 +623,33 @@ print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'ou
         self.assertTrue(result["metrics"]["queue"]["rename_retry_deferred"])
         self.assertGreaterEqual(result["metrics"]["stages_ms"]["readiness_and_listing"], 900)
 
+    def test_event_run_emits_only_fixed_privacy_safe_demo_progress(self):
+        self.write_voice("Work note: review purchaser accounts in the sandbox.")
+        recording = self.root / "new.m4a"
+        recording.write_bytes(b"fixture audio")
+        result_file = self.root / "result.json"
+        completed = self.sync(extra_args=(
+            "--recording-file", str(recording),
+            "--detected-at", "2026-08-01T13:00:15Z",
+            "--run-id", "fixture-demo-run",
+            "--result-file", str(result_file),
+            "--demo-progress",
+        ))
+        result = json.loads(result_file.read_text(encoding="utf-8"))
+        progress = completed.stdout.splitlines()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(progress, [
+            "voice-memo-demo:listening",
+            "voice-memo-demo:qualified",
+            "voice-memo-demo:organizing",
+            "voice-memo-demo:drafting",
+            "voice-memo-demo:validated",
+            "voice-memo-demo:imported",
+        ])
+        self.assertNotIn("purchaser", completed.stdout.casefold())
+        self.assertNotIn("fixture-demo-run", completed.stdout)
+
     def test_push_conflict_leaves_memo_pending_without_marker_on_remote(self):
         self.write_voice("For work, review purchaser accounts in the sandbox.")
         self.write_codex(push_conflict=True)
@@ -764,6 +791,39 @@ class AgentTests(unittest.TestCase):
 
     def test_non_audio_file_does_not_trigger(self):
         self.assertFalse(self.classify("/tmp/new.waveform", "--created", "--is-file")["should_trigger"])
+
+    def test_demo_log_is_conversational_and_paced(self):
+        with tempfile.TemporaryDirectory() as directory:
+            demo_log = Path(directory) / "agent-demo.log"
+            started = time.monotonic()
+            result = json.loads(run(
+                str(AGENT),
+                "demo-log-preview",
+                "--demo-log-path", str(demo_log),
+                "--demo-log-interval-ms", "40",
+            ).stdout)
+            elapsed = time.monotonic() - started
+            lines = demo_log.read_text(encoding="utf-8").splitlines()
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(elapsed, 0.20)
+        self.assertEqual(len(lines), 7)
+        self.assertIn("🎙️ New memo detected", lines[0])
+        self.assertIn("audio locally before touching", lines[0])
+        self.assertIn("📝 Transcribing on this Mac", lines[1])
+        self.assertIn("recording stays local", lines[1])
+        self.assertIn("💡 Found the “work note” cue", lines[2])
+        self.assertIn("opt-in", lines[2])
+        self.assertIn("🔎 Comparing the memo", lines[3])
+        self.assertIn("best destination", lines[3])
+        self.assertIn("🧠 Relevant context found", lines[4])
+        self.assertIn("raw transcript", lines[4])
+        self.assertIn("🛡️ Safety checks passed", lines[5])
+        self.assertIn("no overwritten", lines[5])
+        self.assertIn("✅ Update committed and pushed", lines[6])
+        self.assertIn("notes are current", lines[6])
+        self.assertTrue(all(not line.startswith("[") for line in lines))
+        self.assertTrue(all(not line.lstrip().startswith("{") for line in lines))
 
     def test_rename_row_score_uses_recording_date_time_and_duration(self):
         result = json.loads(run(

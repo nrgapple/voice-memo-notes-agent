@@ -337,6 +337,114 @@ private final class AgentLogger {
     }
 }
 
+private final class DemoLogger {
+    private let path: String
+    private let minimumInterval: TimeInterval
+    private let queue = DispatchQueue(label: "com.nrgapple.VoiceMemoAgent.demo-log")
+    private var lastWriteAt: Date?
+
+    init(path: String, minimumIntervalMilliseconds: Int) {
+        self.path = path
+        self.minimumInterval = TimeInterval(minimumIntervalMilliseconds) / 1000
+        let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+    }
+
+    func write(_ message: String) {
+        queue.async {
+            if let lastWriteAt = self.lastWriteAt {
+                let remaining = self.minimumInterval - Date().timeIntervalSince(lastWriteAt)
+                if remaining > 0 {
+                    Thread.sleep(forTimeInterval: remaining)
+                }
+            }
+            self.rotateIfNeeded()
+            let line = "\(message)\n"
+            if !FileManager.default.fileExists(atPath: self.path) {
+                FileManager.default.createFile(atPath: self.path, contents: nil)
+            }
+            guard let handle = FileHandle(forWritingAtPath: self.path) else { return }
+            defer { try? handle.close() }
+            do {
+                try handle.seekToEnd()
+                try handle.write(contentsOf: Data(line.utf8))
+                self.lastWriteAt = Date()
+            } catch {}
+        }
+    }
+
+    func flush() {
+        queue.sync {}
+    }
+
+    private func rotateIfNeeded() {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let size = attributes[.size] as? NSNumber,
+              size.intValue > 5 * 1024 * 1024 else { return }
+        let previous = path + ".1"
+        try? FileManager.default.removeItem(atPath: previous)
+        try? FileManager.default.moveItem(atPath: path, toPath: previous)
+    }
+}
+
+private final class DemoProgressReader {
+    private let logger: DemoLogger
+    private let lock = NSLock()
+    private var buffer = ""
+
+    init(logger: DemoLogger) {
+        self.logger = logger
+    }
+
+    func consume(_ data: Data) {
+        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        buffer += text
+        while let newline = buffer.firstIndex(of: "\n") {
+            let line = String(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+            handle(line)
+        }
+    }
+
+    func finish() {
+        lock.lock()
+        defer { lock.unlock() }
+        if !buffer.isEmpty {
+            handle(buffer)
+            buffer = ""
+        }
+    }
+
+    private func handle(_ line: String) {
+        guard line.hasPrefix("voice-memo-demo:") else { return }
+        switch String(line.dropFirst("voice-memo-demo:".count)) {
+        case "listening":
+            logger.write("📝 Transcribing on this Mac now. The recording stays local while I turn speech into text.")
+        case "qualified":
+            logger.write("💡 Found the “work note” cue. That opt-in tells me this memo is allowed into your work notes.")
+        case "organizing":
+            logger.write("🔎 Comparing the memo with your existing notes and links to find the best destination.")
+        case "drafting":
+            logger.write("🧠 Relevant context found. I’m writing a concise update instead of copying the raw transcript.")
+        case "validated":
+            logger.write("🛡️ Safety checks passed: additive changes only, valid links, and no overwritten note content.")
+        case "review-ready":
+            logger.write("✨ Saved on a private review branch. It’s ready to inspect before reaching your main notes.")
+        case "imported":
+            logger.write("✅ Update committed and pushed. Your notes are current; I’ll rename the recording separately.")
+        case "ignored":
+            logger.write("🔒 No work cue found. I kept the transcript local and left your notes unchanged.")
+        default:
+            break
+        }
+    }
+}
+
 private func sendFailureNotification(
     _ failure: WorkflowFailure,
     runID: String,
@@ -378,6 +486,8 @@ private struct SyncConfiguration {
     let stateDirectory: String
     let logPath: String
     let codexLogPath: String
+    let demoLogPath: String
+    let demoLogIntervalMilliseconds: Int
     let syncTimeoutSeconds: Int
 }
 
@@ -390,10 +500,12 @@ private struct SyncResult {
 private final class SyncRunner {
     private let configuration: SyncConfiguration
     private let logger: AgentLogger
+    private let demoLogger: DemoLogger?
 
-    init(configuration: SyncConfiguration, logger: AgentLogger) {
+    init(configuration: SyncConfiguration, logger: AgentLogger, demoLogger: DemoLogger? = nil) {
         self.configuration = configuration
         self.logger = logger
+        self.demoLogger = demoLogger
     }
 
     func run(
@@ -402,13 +514,13 @@ private final class SyncRunner {
         detectedAt: Date? = nil,
         runID: String = UUID().uuidString.lowercased()
     ) -> SyncResult {
+        let isRecordingRun = detectedAt != nil && !recordingFiles.isEmpty
         let resultPath = configuration.stateDirectory + "/agent-last-message.txt"
         try? FileManager.default.removeItem(atPath: resultPath)
         logger.write("sync-started", fields: [
             "reason": reason, "run_id": runID, "trigger_files": recordingFiles.count,
             "detected_at": detectedAt.map(iso8601) ?? NSNull(),
         ])
-
         let process = Process()
         process.executableURL = URL(fileURLWithPath: configuration.pythonPath)
         process.arguments = [
@@ -424,6 +536,9 @@ private final class SyncRunner {
         }
         for file in recordingFiles {
             process.arguments?.append(contentsOf: ["--recording-file", file])
+        }
+        if isRecordingRun {
+            process.arguments?.append("--demo-progress")
         }
         var environment = ProcessInfo.processInfo.environment
         environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
@@ -442,12 +557,34 @@ private final class SyncRunner {
         }
         let outputHandle = FileHandle(forWritingAtPath: configuration.codexLogPath)
         _ = try? outputHandle?.seekToEnd()
-        process.standardOutput = outputHandle
+        var progressPipe: Pipe?
+        var progressGroup: DispatchGroup?
+        if isRecordingRun, let demoLogger {
+            let pipe = Pipe()
+            let reader = DemoProgressReader(logger: demoLogger)
+            let group = DispatchGroup()
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                while true {
+                    let data = pipe.fileHandleForReading.availableData
+                    if data.isEmpty { break }
+                    reader.consume(data)
+                }
+                reader.finish()
+                group.leave()
+            }
+            progressPipe = pipe
+            progressGroup = group
+            process.standardOutput = pipe
+        } else {
+            process.standardOutput = outputHandle
+        }
         process.standardError = outputHandle
 
         var timedOut = false
         do {
             try process.run()
+            try? progressPipe?.fileHandleForWriting.close()
             let deadline = Date().addingTimeInterval(TimeInterval(configuration.syncTimeoutSeconds))
             while process.isRunning && Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.2)
@@ -464,7 +601,10 @@ private final class SyncRunner {
                 }
             }
             process.waitUntilExit()
+            progressGroup?.wait()
         } catch {
+            try? progressPipe?.fileHandleForWriting.close()
+            progressGroup?.wait()
             try? outputHandle?.close()
             let message = "could not launch deterministic sync: \(error)"
             logger.write("sync-failed", fields: ["reason": reason, "run_id": runID, "error": message])
@@ -473,6 +613,9 @@ private final class SyncRunner {
                 runID: runID,
                 logger: logger
             )
+            if isRecordingRun {
+                demoLogger?.write("⚠️ The import needs attention. I preserved your existing notes and recorded a privacy-safe failure for review.")
+            }
             return SyncResult(exitCode: 127, message: message, workflow: nil)
         }
         try? outputHandle?.close()
@@ -552,6 +695,13 @@ private final class SyncRunner {
             "reviews": workflow?.reviews?.count ?? NSNull(),
             "actionable_failures": workflow?.actionableFailures.count ?? NSNull(),
         ])
+        if isRecordingRun {
+            if effectiveExitCode != 0 || !(workflow?.actionableFailures.isEmpty ?? true) {
+                demoLogger?.write("⚠️ The import needs attention. I preserved your existing notes and recorded a privacy-safe failure for review.")
+            } else if (workflow?.noOp ?? true) && (workflow?.ignoredCount ?? 0) == 0 {
+                demoLogger?.write("👀 The recording is visible, but it is not ready to process yet. I’ll pick it up during reconciliation.")
+            }
+        }
         return SyncResult(exitCode: effectiveExitCode, message: message, workflow: workflow)
     }
 }
@@ -663,15 +813,23 @@ private final class MemoWatcher {
     private let recordingsDirectory: String
     private let statePath: String
     private let logger: AgentLogger
+    private let demoLogger: DemoLogger
     private let coordinator: SyncCoordinator
     private let queue = DispatchQueue(label: "com.nrgapple.VoiceMemoAgent.fsevents")
     private var stream: FSEventStreamRef?
     private var knownRecordings: Set<String> = []
 
-    init(recordingsDirectory: String, stateDirectory: String, logger: AgentLogger, coordinator: SyncCoordinator) {
+    init(
+        recordingsDirectory: String,
+        stateDirectory: String,
+        logger: AgentLogger,
+        demoLogger: DemoLogger,
+        coordinator: SyncCoordinator
+    ) {
         self.recordingsDirectory = recordingsDirectory
         self.statePath = stateDirectory + "/agent-event-state.json"
         self.logger = logger
+        self.demoLogger = demoLogger
         self.coordinator = coordinator
     }
 
@@ -769,6 +927,7 @@ private final class MemoWatcher {
                 "detected_at": iso8601(detectedAt),
                 "run_id": runID,
             ])
+            demoLogger.write("🎙️ New memo detected. I’ll process the audio locally before touching your notes.")
             coordinator.schedule(
                 reason: "recording-created",
                 recordingFiles: created,
@@ -1035,6 +1194,8 @@ private func syncConfiguration() throws -> SyncConfiguration {
         stateDirectory: stateDirectory,
         logPath: argumentValue("--log-path") ?? stateDirectory + "/agent.log",
         codexLogPath: argumentValue("--codex-log-path") ?? stateDirectory + "/agent-codex.log",
+        demoLogPath: argumentValue("--demo-log-path") ?? stateDirectory + "/agent-demo.log",
+        demoLogIntervalMilliseconds: try intValue("--demo-log-interval-ms", default: 1500),
         syncTimeoutSeconds: try intValue("--sync-timeout-seconds", default: 600)
     )
 }
@@ -1046,12 +1207,17 @@ private func runWatch() throws -> Never {
     let reconcile = try intValue("--reconcile-seconds", default: 21_600)
     try FileManager.default.createDirectory(atPath: configuration.stateDirectory, withIntermediateDirectories: true)
     let logger = AgentLogger(path: configuration.logPath)
-    let runner = SyncRunner(configuration: configuration, logger: logger)
+    let demoLogger = DemoLogger(
+        path: configuration.demoLogPath,
+        minimumIntervalMilliseconds: configuration.demoLogIntervalMilliseconds
+    )
+    let runner = SyncRunner(configuration: configuration, logger: logger, demoLogger: demoLogger)
     let coordinator = SyncCoordinator(runner: runner, logger: logger, debounceSeconds: debounce)
     let watcher = MemoWatcher(
         recordingsDirectory: recordings,
         stateDirectory: configuration.stateDirectory,
         logger: logger,
+        demoLogger: demoLogger,
         coordinator: coordinator
     )
     let sessionActivityWatcher = SessionActivityWatcher(logger: logger, coordinator: coordinator)
@@ -1198,6 +1364,28 @@ private func runRenameRowScore() throws {
     printJSON(["ok": true, "score": score])
 }
 
+private func runDemoLogPreview() throws {
+    let path = try requiredValue("--demo-log-path")
+    let logger = DemoLogger(
+        path: path,
+        minimumIntervalMilliseconds: try intValue("--demo-log-interval-ms", default: 1500)
+    )
+    logger.write("🎙️ New memo detected. I’ll process the audio locally before touching your notes.")
+    let reader = DemoProgressReader(logger: logger)
+    reader.consume(Data("""
+    voice-memo-demo:listening
+    voice-memo-demo:qualified
+    voice-memo-demo:organizing
+    voice-memo-demo:drafting
+    voice-memo-demo:validated
+    voice-memo-demo:imported
+
+    """.utf8))
+    reader.finish()
+    logger.flush()
+    printJSON(["log_path": path, "ok": true])
+}
+
 private func printHelp() {
     print("Voice Memo Agent")
     print("  watch --recordings-dir PATH --repo PATH --codex-path PATH --gh-path PATH --node-path PATH --python-path PATH --sync-script PATH [--sync-timeout-seconds N]")
@@ -1206,6 +1394,7 @@ private func printHelp() {
     print("  classify-event --path PATH [--created] [--is-file]")
     print("  configure-pushover | pushover-status | pushover-test")
     print("  notification-preview --workflow-json JSON")
+    print("  demo-log-preview --demo-log-path PATH [--demo-log-interval-ms N]")
     print("  rename-row-score --description TEXT [--recorded-at DATE] [--duration SECONDS]")
     print("  --memo-id ID --current-title TITLE --new-title TITLE")
     print("  --check-accessibility | --request-accessibility")
@@ -1231,6 +1420,8 @@ do {
         try runPushoverTest()
     } else if hasArgument("notification-preview") {
         try runNotificationPreview()
+    } else if hasArgument("demo-log-preview") {
+        try runDemoLogPreview()
     } else if hasArgument("rename-row-score") {
         try runRenameRowScore()
     } else if hasArgument("watch") {

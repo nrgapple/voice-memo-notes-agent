@@ -6,6 +6,7 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 - Add a repository-owned macOS icon and deterministic `.icns` generation.
 - Add ad hoc-signed Apple Silicon, Intel, and universal app builds with checksums and provenance attestations.
+- Add a privacy-safe, paced, timestamp-free narration that explains each processing milestone in terminal and VHS demos.
 
 ## 0.1.0-beta.1 - 2026-08-02
 

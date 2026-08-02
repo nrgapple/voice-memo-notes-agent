@@ -17,6 +17,8 @@ When the coordinator returns a structured review or successful import, the app b
 
 For every attempted memo, the coordinator writes a schema-versioned `memo-metrics` JSONL event before returning. The event includes outcome, recording/file/detection clocks, transcription source/cache/duration/character count, retrieval duration/candidate count/character volume, Codex duration/token usage/tool calls/confidence, validation and publish durations, affected-file count, and commit SHA. It contains no prompt, transcript, audio, note content, credentials, model prose, or command output. Because it is written to `sync.log`, later app runs may replace `agent-last-message.txt` without losing benchmark data.
 
+The app also owns a presentation-only `agent-demo.log`. It stays silent unless FSEvents detects a newly created recording, then explains the corresponding run with timestamp-free, emoji-led sentences covering local transcription, opt-in qualification, note retrieval, contextual drafting, validation, and delivery. A private serial writer keeps messages at least 1.5 seconds apart without slowing the import worker. The demo log never includes filenames, memo IDs, run IDs, titles, transcripts, note paths, command output, or credentials. It does not replace or feed the JSONL telemetry.
+
 Voice Memos renaming is best-effort and has independent state. The skill records the generated target title before committing and queues rename retries independently. In review mode, import success is recorded only after the commit appears on the configured target branch; direct mode records success after its remote push is verified. Recording date, time, and duration disambiguate repeated generic titles. A locked session, delayed iCloud UI row, or title-confirmation timeout leaves `rename_status` pending without changing review/import state. Later runs verify the title by memo ID before retrying, so a rename that actually succeeded despite a UI timeout is recovered without another edit.
 
 Runtime files are local and excluded from Git:
@@ -25,6 +27,8 @@ Runtime files are local and excluded from Git:
 .voice-memo-automation/agent.log
 .voice-memo-automation/agent.log.1
 .voice-memo-automation/agent-codex.log
+.voice-memo-automation/agent-demo.log
+.voice-memo-automation/agent-demo.log.1
 .voice-memo-automation/agent-launchd.log
 .voice-memo-automation/agent-event-state.json
 .voice-memo-automation/agent-last-message.txt
