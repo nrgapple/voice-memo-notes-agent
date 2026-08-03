@@ -91,6 +91,8 @@ export VOICE_MEMO_NOTES_BRANCH="main"
 
 The notes repository is intentionally required on first install; the project contains no personal vault default. Bootstrap is idempotent and reuses the repository path from an existing LaunchAgent during upgrades. It builds and locally signs `/Applications/Voice Memo Agent.app`, registers the pinned MCP server, prepares the notes checkout, initializes local state, and installs `~/Library/LaunchAgents/com.nrgapple.VoiceMemoAgent.plist`. Advanced source-only deployments may provide `VOICE_MEMO_SIGNING_IDENTITY` instead of creating the local identity.
 
+Run bootstrap from the durable checkout (or its installed skill link), never from a temporary Codex worktree. The installed LaunchAgent intentionally keeps an absolute path to the sync coordinator so a temporary worktree would make the service fragile.
+
 ## macOS Permissions
 
 Grant **Full Disk Access** to the Codex/ChatGPT desktop app and **Voice Memo Agent**. Grant **Accessibility** to **Voice Memo Agent** so it can rename recordings. The MCP reads the Voice Memos database; title changes go through the visible Voice Memos application rather than direct database writes.

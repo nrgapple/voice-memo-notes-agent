@@ -51,6 +51,10 @@ if [[ -z "${NOTES_DIR}" && -f "${LAUNCH_AGENT}" ]]; then
   ' 2>/dev/null || true)"
 fi
 NOTES_DIR="${NOTES_DIR:-${HOME}/Documents/VoiceMemoNotes}"
+AGENT_SYNC_SCRIPT="$(plutil -convert json -o - "${LAUNCH_AGENT}" 2>/dev/null | jq -r '
+  (.ProgramArguments | index("--sync-script")) as $index
+  | if $index == null then "" else .ProgramArguments[$index + 1] end
+' 2>/dev/null || true)"
 if [[ -d "${NOTES_DIR}/.git" ]]; then
   notes_origin_for_config="$(git -C "${NOTES_DIR}" remote get-url origin 2>/dev/null || true)"
   if [[ -z "${NOTES_REPOSITORY}" ]]; then
@@ -102,6 +106,8 @@ fi
 check "agent-launch-plist" plutil -lint "${LAUNCH_AGENT}"
 check "agent-launch-service" launchctl print "gui/$(id -u)/${LAUNCH_AGENT_LABEL}"
 check "agent-sync-timeout" zsh -c "plutil -convert json -o - '${LAUNCH_AGENT}' | jq -e '.ProgramArguments | index(\"--sync-timeout-seconds\") != null'"
+check "agent-sync-script" test -f "${AGENT_SYNC_SCRIPT}"
+check "agent-sync-script-durable" zsh -c "[[ '${AGENT_SYNC_SCRIPT}' != '${CODEX_ROOT}/worktrees/'* ]]"
 check "mcp-registered" zsh -c "codex mcp list --json | jq -e '.[] | select(.name == \"apple-voice-memos\" and .enabled == true)'"
 check "mcp-pinned-base" zsh -c "test \"\$(git -C '${TOOL_DIR}' rev-parse HEAD^)\" = '${MCP_COMMIT}'"
 check "mcp-compat-patch" git -C "${TOOL_DIR}" apply --reverse --check "${MCP_COMPAT_PATCH}"

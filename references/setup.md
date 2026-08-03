@@ -2,6 +2,8 @@
 
 `bootstrap.sh` installs a pinned, local copy of `jwulff/apple-voice-memo-mcp`, builds its TypeScript server and Swift Speech helper, builds the Voice Memo Agent, registers the MCP server, installs its LaunchAgent, clones the configured notes repository, and initializes local state. On first install, set `VOICE_MEMO_NOTES_REPOSITORY=owner/private-notes`. `VOICE_MEMO_NOTES_REPO_DIR` defaults to `~/Documents/VoiceMemoNotes`, and `VOICE_MEMO_NOTES_BRANCH` defaults to the GitHub repository's default branch. Upgrades reuse the repository path already installed in the LaunchAgent.
 
+Run bootstrap from a durable source checkout or the installed skill link. It refuses source paths under `~/.codex/worktrees/` because the LaunchAgent stores the coordinator's absolute path and must remain valid after Codex cleans up a temporary worktree.
+
 Pinned dependency:
 
 - package manifest version: `0.1.0`
