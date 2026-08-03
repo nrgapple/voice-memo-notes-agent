@@ -2,6 +2,12 @@
 
 All notable changes are documented here. The project follows Semantic Versioning while its public API and configuration are under active development.
 
+## Unreleased
+
+- Reject ephemeral Codex worktrees when installing the persistent LaunchAgent.
+- Fail missing notes checkouts before creating automation state, with a specific Git-preflight diagnostic.
+- Verify that the installed sync coordinator exists at a durable path during doctor checks.
+
 ## 0.1.0-beta.2 - 2026-08-02
 
 - Add a repository-owned macOS icon and deterministic `.icns` generation.

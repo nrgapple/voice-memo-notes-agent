@@ -4,6 +4,13 @@ set -euo pipefail
 CODEX_ROOT="${CODEX_HOME:-${HOME}/.codex}"
 SCRIPT_DIR="${0:A:h}"
 SKILL_DIR="${SCRIPT_DIR:h}"
+case "${SKILL_DIR}" in
+  "${CODEX_ROOT}/worktrees/"*)
+    print -u2 "refusing to install a persistent agent from an ephemeral Codex worktree: ${SKILL_DIR}"
+    print -u2 "run bootstrap from a durable checkout or the installed sync-voice-memos-to-notes skill"
+    exit 1
+    ;;
+esac
 TOOL_DIR="${CODEX_ROOT}/tools/apple-voice-memo-mcp"
 NOTES_REPOSITORY="${VOICE_MEMO_NOTES_REPOSITORY:-}"
 NOTES_BRANCH="${VOICE_MEMO_NOTES_BRANCH:-}"

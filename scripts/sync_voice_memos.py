@@ -222,11 +222,13 @@ class Coordinator:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         self.repo = args.repo.resolve()
+        self.repository_validated = False
         self.state_root = self.repo / ".voice-memo-automation"
         self.transcripts = self.state_root / "transcripts"
         self.worktrees = self.state_root / "worktrees"
         self.log_path = self.state_root / "sync.log"
-        self.sanitize_legacy_log()
+        # Do not create or rewrite state under an invalid checkout. A missing
+        # notes repository is an installation failure, not a fresh vault.
         self.run_id = args.run_id or uuid.uuid4().hex
         self.owner = f"sync-{os.getpid()}-{self.run_id[:8]}"
         self.lease_acquired = False
@@ -286,6 +288,8 @@ class Coordinator:
         os.replace(temporary, self.log_path)
 
     def emit(self, event: str, **fields: Any) -> None:
+        if not self.repository_validated:
+            return
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -324,12 +328,32 @@ class Coordinator:
         self.lease_acquired = bool(acquired and acquired.get("acquired"))
         return self.lease_acquired
 
+    def require_repository_checkout(self, memo_id: int | None = None) -> None:
+        completed = run(
+            ["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"],
+            check=False,
+        )
+        try:
+            checkout_root = Path(completed.stdout.strip()).resolve()
+        except (OSError, RuntimeError):
+            checkout_root = Path()
+        if completed.returncode or checkout_root != self.repo:
+            raise SyncError(
+                "git-preflight",
+                f"dedicated notes checkout is not a Git repository: {self.repo}",
+                memo_id,
+            )
+        if not self.repository_validated:
+            self.repository_validated = True
+            self.sanitize_legacy_log()
+
     def release(self) -> None:
         if self.lease_acquired:
             self.state("release", "--owner", self.owner, check=False)
             self.lease_acquired = False
 
     def require_clean_checkout(self, memo_id: int | None = None) -> None:
+        self.require_repository_checkout(memo_id)
         if run(["git", "-C", str(self.repo), "status", "--porcelain"]).stdout.strip():
             raise SyncError("git-preflight", "dedicated notes checkout is dirty", memo_id)
         branch = run(["git", "-C", str(self.repo), "branch", "--show-current"]).stdout.strip()
@@ -1113,6 +1137,8 @@ Candidate graph context (resolved Foam links only):
             })
 
     def execute(self) -> dict[str, Any]:
+        with self.stage("repository_preflight"):
+            self.require_repository_checkout()
         with self.stage("configuration"):
             config = self.load_config()
 

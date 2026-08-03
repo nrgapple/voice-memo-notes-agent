@@ -588,6 +588,24 @@ print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'ou
         self.assertEqual(result["actionable_failures"][0]["stage"], "git-preflight")
         self.assertFalse(self.codex_calls.exists())
 
+    def test_missing_checkout_fails_without_creating_automation_state(self):
+        missing = self.root / "missing-notes"
+        node = "/opt/homebrew/bin/node" if Path("/opt/homebrew/bin/node").is_file() else (shutil.which("node") or "node")
+        completed = run(
+            "python3",
+            str(SYNC),
+            "--repo",
+            str(missing),
+            "--node-path",
+            node,
+            check=False,
+        )
+        result = json.loads(completed.stdout)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["actionable_failures"][0]["stage"], "git-preflight")
+        self.assertIn("is not a Git repository", result["actionable_failures"][0]["message"])
+        self.assertFalse(missing.exists())
+
     def test_invalid_runtime_limit_returns_structured_configuration_failure(self):
         config_path = self.repo / ".voice-memo-automation/config.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
