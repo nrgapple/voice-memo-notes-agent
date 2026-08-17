@@ -373,6 +373,40 @@ else process.exit(2);
 """
         self.voice_cli.write_text(source, encoding="utf-8")
 
+    def write_disappearing_voice(self):
+        listed = self.root / "voice-listed"
+        baseline = [{
+            "id": 1,
+            "title": "Baseline",
+            "date": "2026-07-31T09:00:00-04:00",
+            "duration": 8.0,
+            "path": "baseline.m4a",
+        }]
+        disappearing = {
+            "id": 2,
+            "title": "Recording 2",
+            "date": "2026-08-01T09:00:00-04:00",
+            "duration": 1.6,
+            "path": "new.m4a",
+        }
+        source = f"""#!/usr/bin/env node
+import {{ existsSync, writeFileSync }} from 'fs';
+const baseline = {json.dumps(baseline)};
+const disappearing = {json.dumps(disappearing)};
+const listed = {json.dumps(str(listed))};
+const command = process.argv[2];
+if (command === 'list') {{
+  const first = !existsSync(listed);
+  writeFileSync(listed, 'listed');
+  const memos = first ? [...baseline, disappearing] : baseline;
+  console.log(JSON.stringify({{memos, total: memos.length}}));
+}} else if (command === 'transcript') {{
+  console.error('Voice Memo 2 was not found');
+  process.exit(3);
+}} else process.exit(2);
+"""
+        self.voice_cli.write_text(source, encoding="utf-8")
+
     def write_codex(
         self,
         push_conflict: bool = False,
@@ -456,6 +490,22 @@ print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'ou
         self.assertEqual(result["metrics"]["codex_calls"], 0)
         self.assertFalse(self.codex_calls.exists())
         self.assertEqual(self.record(2)["status"], "ignored")
+
+    def test_memo_removed_after_listing_is_silently_ignored(self):
+        self.write_disappearing_voice()
+
+        result = json.loads(self.sync().stdout)
+
+        self.assertEqual(result["actionable_failures"], [])
+        self.assertEqual(result["ignored_count"], 1)
+        self.assertEqual(result["metrics"]["codex_calls"], 0)
+        self.assertEqual(result["metrics"]["memos"][0]["outcome"], "disappeared")
+        self.assertFalse(self.codex_calls.exists())
+        record = self.record(2)
+        self.assertEqual(record["status"], "ignored")
+        self.assertEqual(record["ignored_reason"], "recording disappeared before processing")
+        failures = self.repo / ".voice-memo-automation/failures.jsonl"
+        self.assertFalse(failures.exists())
 
     def test_qualified_memo_commits_once_and_rename_failure_is_nonblocking(self):
         self.write_voice("Work note: review purchaser accounts in the sandbox.")
