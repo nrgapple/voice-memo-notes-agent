@@ -52,6 +52,10 @@ class SyncError(RuntimeError):
         self.memo_id = memo_id
 
 
+class MemoUnavailable(RuntimeError):
+    """A memo vanished from Voice Memos after the run snapshot was taken."""
+
+
 @dataclass
 class CommandResult:
     stdout: str
@@ -464,7 +468,18 @@ class Coordinator:
                 cached, "local-cache", True,
                 round((time.monotonic() - started) * 1000),
             )
-        payload = self.voice("transcript", "--id", str(memo["id"]), "--language", language)
+        try:
+            payload = self.voice("transcript", "--id", str(memo["id"]), "--language", language)
+        except RuntimeError as error:
+            # Voice Memos can remove a short recording after it was included in
+            # the run's initial database snapshot (for example, when the user
+            # discards it on another device). Re-list before escalating a real
+            # transcription failure so this expected race stays silent.
+            current = self.voice("list")
+            current_ids = {int(item["id"]) for item in current.get("memos", [])}
+            if int(memo["id"]) not in current_ids:
+                raise MemoUnavailable(int(memo["id"])) from error
+            raise
         text = payload.get("text", "").strip()
         if not text:
             raise SyncError("transcription", "transcription was empty", int(memo["id"]))
@@ -1291,6 +1306,14 @@ Candidate graph context (resolved Foam links only):
                     outcome = self.process_qualified(
                         memo, transcript_result.text, matched, journal_date, record, config, memo_metrics,
                     )
+                except MemoUnavailable:
+                    self.state(
+                        "ignore", "--id", str(memo_id),
+                        "--reason", "recording disappeared before processing",
+                    )
+                    self.result["ignored_count"] += 1
+                    outcome = "disappeared"
+                    self.emit("memo-disappeared", memo_id=int(memo_id))
                 except SyncError as error:
                     self.record_failure(error)
                     memo_metrics["failure_stage"] = error.stage
