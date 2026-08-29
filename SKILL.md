@@ -40,7 +40,7 @@ python3 scripts/sync_voice_memos.py \
   --repo "$VOICE_MEMO_NOTES_REPO_DIR"
 ```
 
-The command prints structured JSON. Stay quiet when `no_op` is true and `actionable_failures` is empty. Report each item in `reviews`, each completed item in `imports`, and any `actionable_failures`. Do not manually repeat or continue a partial transaction; retries and recovery are coordinator-owned.
+The command prints structured JSON. Stay quiet when `no_op` is true and both `skipped` and `actionable_failures` are empty. Report each item in `reviews`, each completed item in `imports`, each privacy-safe final status in `skipped`, and any `actionable_failures`. Do not manually repeat or continue a partial transaction; retries and recovery are coordinator-owned.
 
 Read [references/automation-contract.md](references/automation-contract.md) for guarantees and [references/note-integration.md](references/note-integration.md) only when changing semantic placement behavior.
 
@@ -52,13 +52,13 @@ For presentation capture, the app writes generic, paced, emoji-led updates for n
 
 Fresh installations push a per-memo review branch. The agent sends a Pushover review notification containing only the memo ID, generated title, affected note paths, commit SHA, and GitHub comparison URL. After that commit is merged into the configured target branch, reconciliation records the import without another Codex call. Notification delivery is best-effort and independent of memo state: never retry, roll back, or duplicate an import because notification delivery failed.
 
-When an import attempt produces an actionable failure, the agent sends a privacy-safe Pushover alert containing only the memo ID and failure stage. It never includes the coordinator's error message, transcript, note path, or command output. The first failed import attempt is actionable immediately; a third consecutive failure produces one escalation without alerting on every reconciliation retry. Coordinator launch/result failures and watcher startup failures send generic runtime alerts; watcher startup alerts are limited to one per app lifetime. Rename alerts explicitly say that the import already succeeded.
+When a detected recording is not a work memo or is deleted before processing finishes, the agent sends a privacy-safe final status saying that the work notes were left unchanged. When an import attempt produces an actionable failure, the agent sends a privacy-safe Pushover alert containing only the memo ID and failure stage. It never includes the coordinator's error message, transcript, note path, or command output. The first failed import attempt is actionable immediately; a third consecutive failure produces one escalation without alerting on every reconciliation retry. Coordinator launch/result failures and watcher startup failures send generic runtime alerts; watcher startup alerts are limited to one per app lifetime. Rename alerts explicitly say that the import already succeeded.
 
 ## Safety
 
 - Never delete or rename note files during an import.
 - Never overwrite remote changes or force-push.
 - Stop on a dirty checkout, an unpushed local commit, a push conflict, or a failed validator.
-- Keep no-op runs silent. Report imported memo IDs with commit SHAs and actionable failures only.
+- Keep no-op runs without skipped outcomes silent. Report skipped outcomes, imported memo IDs with commit SHAs, and actionable failures only.
 - Rename only qualified, unseen memos. Never rename baseline or ignored recordings.
 - Never let a title change block, roll back, or duplicate a successful note import or notification.

@@ -244,6 +244,7 @@ class Coordinator:
             "no_op": True,
             "imports": [],
             "reviews": [],
+            "skipped": [],
             "actionable_failures": [],
             "ignored_count": 0,
             "run_id": self.run_id,
@@ -258,6 +259,7 @@ class Coordinator:
             },
         }
         self.started = time.monotonic()
+        self.removed_trigger_names: set[str] = set()
         self.semantic_model = ""
         self.semantic_reasoning_effort = "medium"
         self.publish_mode = "review"
@@ -391,11 +393,36 @@ class Coordinator:
         self.memos = sorted(payload["memos"], key=lambda memo: (memo.get("date") or "", int(memo["id"])))
         self.memo_by_id = {int(memo["id"]): memo for memo in self.memos}
 
+    def record_skip(self, memo_id: int | None, reason: str) -> None:
+        skipped = {"memo_id": memo_id, "reason": reason}
+        if skipped in self.result["skipped"]:
+            return
+        self.result["skipped"].append(skipped)
+        self.result["ignored_count"] += 1
+
+    def exclude_removed_triggers(self) -> None:
+        if not self.removed_trigger_names:
+            return
+        removed_memos = {
+            Path(str(memo.get("path") or "")).name: int(memo["id"])
+            for memo in self.memos
+            if Path(str(memo.get("path") or "")).name in self.removed_trigger_names
+        }
+        for name in sorted(self.removed_trigger_names):
+            self.record_skip(removed_memos.get(name), "removed")
+        self.memos = [
+            memo for memo in self.memos
+            if Path(str(memo.get("path") or "")).name not in self.removed_trigger_names
+        ]
+        self.memo_by_id = {int(memo["id"]): memo for memo in self.memos}
+        self.emit("trigger-recordings-removed", count=len(self.removed_trigger_names))
+        self.removed_trigger_names.clear()
+
     def wait_for_trigger_readiness(self, config: dict[str, Any]) -> None:
         if not self.args.recording_file:
             self.list_memos()
             return
-        files = [Path(path) for path in self.args.recording_file]
+        files = {str(Path(path)): Path(path) for path in self.args.recording_file}
         deadline = time.monotonic() + float(config["readiness_timeout_seconds"])
         stable_needed = max(1, int(config["readiness_stable_checks"]))
         previous: dict[str, tuple[int, int]] = {}
@@ -403,13 +430,18 @@ class Coordinator:
         while time.monotonic() < deadline:
             current: dict[str, tuple[int, int]] = {}
             all_present = True
-            for path in files:
+            for key, path in list(files.items()):
                 try:
                     stat = path.stat()
                     current[str(path)] = (stat.st_size, stat.st_mtime_ns)
                     all_present = all_present and stat.st_size > 0
                 except OSError:
-                    all_present = False
+                    self.removed_trigger_names.add(path.name)
+                    del files[key]
+            if not files:
+                self.list_memos()
+                self.exclude_removed_triggers()
+                return
             stable = stable + 1 if all_present and current == previous else 0
             previous = current
             if stable >= stable_needed:
@@ -420,7 +452,8 @@ class Coordinator:
                     time.sleep(1)
                     continue
                 database_paths = {Path(str(memo.get("path") or "")).name for memo in self.memos}
-                if all(path.name in database_paths for path in files):
+                if all(path.name in database_paths for path in files.values()):
+                    self.exclude_removed_triggers()
                     self.emit("trigger-ready", files=len(files), stable_checks=stable)
                     return
             time.sleep(1)
@@ -1219,6 +1252,17 @@ Candidate graph context (resolved Foam links only):
                 self.result["metrics"]["duration_ms"] = round((time.monotonic() - self.started) * 1000)
                 return self.result
 
+            for skipped in self.result["skipped"]:
+                removed_id = skipped.get("memo_id")
+                if removed_id is None:
+                    continue
+                record = self.state("show", "--id", str(removed_id), check=False) or {}
+                if record.get("status") not in {"baseline", "committed", "awaiting_review"}:
+                    self.state(
+                        "ignore", "--id", str(removed_id),
+                        "--reason", "recording disappeared before processing",
+                    )
+
             with self.stage("review_reconciliation"):
                 self.reconcile_reviews(int(config["max_memos_per_run"]))
 
@@ -1296,7 +1340,7 @@ Candidate graph context (resolved Foam links only):
                     memo_metrics["qualified"] = bool(matched)
                     if not matched:
                         self.state("ignore", "--id", str(memo_id), "--reason", "missing work trigger")
-                        self.result["ignored_count"] += 1
+                        self.record_skip(int(memo_id), "not_work")
                         outcome = "ignored"
                         self.demo_progress("ignored")
                         continue
@@ -1311,7 +1355,7 @@ Candidate graph context (resolved Foam links only):
                         "ignore", "--id", str(memo_id),
                         "--reason", "recording disappeared before processing",
                     )
-                    self.result["ignored_count"] += 1
+                    self.record_skip(int(memo_id), "removed")
                     outcome = "disappeared"
                     self.emit("memo-disappeared", memo_id=int(memo_id))
                 except SyncError as error:
