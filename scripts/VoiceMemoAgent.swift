@@ -150,6 +150,16 @@ private struct WorkflowFailure: Codable {
     }
 }
 
+private struct WorkflowSkip: Codable {
+    let memoID: Int64?
+    let reason: String
+
+    enum CodingKeys: String, CodingKey {
+        case memoID = "memo_id"
+        case reason
+    }
+}
+
 private struct WorkflowReview: Codable {
     let memoID: Int64
     let title: String
@@ -184,6 +194,7 @@ private struct WorkflowResult: Codable {
     let noOp: Bool
     let imports: [WorkflowImport]
     let reviews: [WorkflowReview]?
+    let skipped: [WorkflowSkip]?
     let actionableFailures: [WorkflowFailure]
     let ignoredCount: Int
     let metrics: WorkflowMetrics
@@ -194,6 +205,7 @@ private struct WorkflowResult: Codable {
         case noOp = "no_op"
         case imports
         case reviews
+        case skipped
         case actionableFailures = "actionable_failures"
         case ignoredCount = "ignored_count"
         case metrics
@@ -201,10 +213,27 @@ private struct WorkflowResult: Codable {
 }
 
 private func processingStartedNotificationPayload(recordingCount: Int) -> ImportNotificationPayload {
-    let subject = recordingCount == 1 ? "A new voice memo was" : "\(recordingCount) new voice memos were"
+    let subject = recordingCount == 1 ? "a new voice memo" : "\(recordingCount) new voice memos"
+    let pronoun = recordingCount == 1 ? "it" : "they"
     return ImportNotificationPayload(
-        title: "Voice memo found",
-        message: "\(subject) found and processing has started.",
+        title: "Voice memo detected",
+        message: "Checking \(subject) to see whether \(pronoun) should be added to your work notes.",
+        url: nil
+    )
+}
+
+private func skippedNotificationPayload(from skipped: WorkflowSkip) -> ImportNotificationPayload {
+    let subject = skipped.memoID.map { "Memo \($0)" } ?? "The voice memo"
+    if skipped.reason == "removed" {
+        return ImportNotificationPayload(
+            title: "Voice memo removed",
+            message: "\(subject) was deleted before processing finished. Your work notes were left unchanged.",
+            url: nil
+        )
+    }
+    return ImportNotificationPayload(
+        title: "Voice memo skipped",
+        message: "\(subject) wasn’t added because it didn’t include a work-note cue. Your work notes were left unchanged.",
         url: nil
     )
 }
@@ -519,6 +548,37 @@ private func sendProcessingStartedNotification(
     }
 }
 
+private func sendSkippedNotification(
+    _ skipped: WorkflowSkip,
+    runID: String,
+    logger: AgentLogger
+) {
+    do {
+        let notifier = PushoverNotifier()
+        if try notifier.configured() {
+            let notificationStarted = Date()
+            let requestID = try notifier.send(skippedNotificationPayload(from: skipped))
+            logger.write("notification-sent", fields: [
+                "provider": "pushover", "request_id": requestID,
+                "memo_id": skipped.memoID ?? NSNull(), "reason": skipped.reason,
+                "run_id": runID, "kind": "skipped",
+                "duration_ms": Int(Date().timeIntervalSince(notificationStarted) * 1000),
+            ])
+        } else {
+            logger.write("notification-skipped", fields: [
+                "provider": "pushover", "reason": "not-configured",
+                "skip_reason": skipped.reason, "run_id": runID, "kind": "skipped",
+            ])
+        }
+    } catch {
+        logger.write("notification-failed", fields: [
+            "provider": "pushover", "memo_id": skipped.memoID ?? NSNull(),
+            "reason": skipped.reason, "run_id": runID,
+            "kind": "skipped", "error": String(describing: error),
+        ])
+    }
+}
+
 private struct SyncConfiguration {
     let codexPath: String
     let ghPath: String
@@ -723,6 +783,9 @@ private final class SyncRunner {
                         "kind": "import", "error": String(describing: error),
                     ])
                 }
+            }
+            for skipped in workflow.skipped ?? [] {
+                sendSkippedNotification(skipped, runID: runID, logger: logger)
             }
             for failure in workflow.actionableFailures {
                 sendFailureNotification(failure, runID: runID, logger: logger)
@@ -1391,6 +1454,8 @@ private func runNotificationPreview() throws {
         payload = reviewNotificationPayload(from: review)
     } else if let failure = result.actionableFailures.first {
         payload = failureNotificationPayload(from: failure)
+    } else if let skipped = result.skipped?.first {
+        payload = skippedNotificationPayload(from: skipped)
     } else {
         printJSON(["ok": true, "should_notify": false])
         return

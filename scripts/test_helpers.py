@@ -488,16 +488,31 @@ print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'ou
         self.write_voice("This is a plan for workouts and groceries.")
         result = json.loads(self.sync().stdout)
         self.assertEqual(result["metrics"]["codex_calls"], 0)
+        self.assertEqual(result["skipped"], [{"memo_id": 2, "reason": "not_work"}])
         self.assertFalse(self.codex_calls.exists())
         self.assertEqual(self.record(2)["status"], "ignored")
 
-    def test_memo_removed_after_listing_is_silently_ignored(self):
+    def test_memo_removed_before_readiness_is_skipped_without_failure(self):
+        self.write_voice("Work note: this recording is deleted before it can be read.")
+        missing_recording = self.root / "new.m4a"
+
+        result = json.loads(self.sync(extra_args=("--recording-file", str(missing_recording))).stdout)
+
+        self.assertEqual(result["actionable_failures"], [])
+        self.assertEqual(result["skipped"], [{"memo_id": 2, "reason": "removed"}])
+        self.assertEqual(result["ignored_count"], 1)
+        self.assertEqual(result["metrics"]["codex_calls"], 0)
+        self.assertFalse(self.codex_calls.exists())
+        self.assertEqual(self.record(2)["status"], "ignored")
+
+    def test_memo_removed_after_listing_is_skipped_without_failure(self):
         self.write_disappearing_voice()
 
         result = json.loads(self.sync().stdout)
 
         self.assertEqual(result["actionable_failures"], [])
         self.assertEqual(result["ignored_count"], 1)
+        self.assertEqual(result["skipped"], [{"memo_id": 2, "reason": "removed"}])
         self.assertEqual(result["metrics"]["codex_calls"], 0)
         self.assertEqual(result["metrics"]["memos"][0]["outcome"], "disappeared")
         self.assertFalse(self.codex_calls.exists())
@@ -962,8 +977,11 @@ class AgentTests(unittest.TestCase):
             ).stdout
         )
         self.assertTrue(result["should_notify"])
-        self.assertEqual(result["title"], "Voice memo found")
-        self.assertEqual(result["message"], "A new voice memo was found and processing has started.")
+        self.assertEqual(result["title"], "Voice memo detected")
+        self.assertEqual(
+            result["message"],
+            "Checking a new voice memo to see whether it should be added to your work notes.",
+        )
         self.assertNotIn(".m4a", result["message"])
         self.assertIsNone(result["url"])
 
@@ -976,7 +994,51 @@ class AgentTests(unittest.TestCase):
                 "2",
             ).stdout
         )
-        self.assertEqual(result["message"], "2 new voice memos were found and processing has started.")
+        self.assertEqual(
+            result["message"],
+            "Checking 2 new voice memos to see whether they should be added to your work notes.",
+        )
+
+    def test_structured_non_work_skip_creates_clear_private_notification_payload(self):
+        workflow = json.dumps({
+            "ok": True,
+            "no_op": True,
+            "imports": [],
+            "skipped": [{"memo_id": 25, "reason": "not_work"}],
+            "actionable_failures": [],
+            "ignored_count": 1,
+            "metrics": {"codex_calls": 0, "duration_ms": 250},
+        })
+
+        result = json.loads(run(str(AGENT), "notification-preview", "--workflow-json", workflow).stdout)
+
+        self.assertTrue(result["should_notify"])
+        self.assertEqual(result["title"], "Voice memo skipped")
+        self.assertIn("didn’t include a work-note cue", result["message"])
+        self.assertIn("work notes were left unchanged", result["message"])
+        self.assertNotIn("transcript", result["message"])
+        self.assertIsNone(result["url"])
+
+    def test_structured_removed_skip_creates_clear_private_notification_payload(self):
+        workflow = json.dumps({
+            "ok": True,
+            "no_op": True,
+            "imports": [],
+            "skipped": [{"memo_id": None, "reason": "removed"}],
+            "actionable_failures": [],
+            "ignored_count": 1,
+            "metrics": {"codex_calls": 0, "duration_ms": 100},
+        })
+
+        result = json.loads(run(str(AGENT), "notification-preview", "--workflow-json", workflow).stdout)
+
+        self.assertTrue(result["should_notify"])
+        self.assertEqual(result["title"], "Voice memo removed")
+        self.assertEqual(
+            result["message"],
+            "The voice memo was deleted before processing finished. Your work notes were left unchanged.",
+        )
+        self.assertIsNone(result["url"])
 
     def test_structured_noop_does_not_notify(self):
         workflow = json.dumps({

@@ -15,12 +15,13 @@ Each run must:
 - process no more than five memos, oldest first;
 - invoke Codex zero times unless a locally transcribed memo contains an exact configured work trigger;
 - invoke Codex once per qualified memo only for title generation and a structured contextual Markdown edit plan;
-- silently mark recordings without a configured work trigger as ignored;
+- mark recordings without a configured work trigger as ignored and return a privacy-safe skipped outcome;
 - assign each qualified recording a concise descriptive title and queue a best-effort Voice Memos rename;
 - make one commit per memo and push a unique review branch by default;
 - send a privacy-safe processing-started notification after a newly detected recording launches the coordinator, without exposing its filename or content;
+- send a privacy-safe completion notification when a recording is skipped because it lacks a work trigger or was deleted before processing finished;
 - mark the memo complete only after that commit is merged into the configured target branch, without a second Codex call;
-- remain silent for no-op and active-lease runs;
+- remain silent for no-op runs without skipped outcomes and for active-lease runs;
 - report `memo id`, generated title, affected notes, and commit SHA after success;
 - report permission, transcription, dirty-checkout, validation, or Git failures when user action is required.
 - notify once on the first failed import attempt and once more if it reaches three consecutive failures, without exposing error details in the notification;
@@ -30,6 +31,6 @@ Each run must:
 Use the state file and provenance marker together for idempotency. A memo is complete only after its commit is pushed and `state.py success` records the SHA.
 Rename state is independent: `rename_status: pending` never changes a committed memo back to pending import status and never suppresses its success notification.
 
-The coordinator returns JSON with `ok`, `no_op`, `reviews`, `imports`, `actionable_failures`, `ignored_count`, and `metrics`. Notifications and callers consume this structure and never parse model prose.
+The coordinator returns JSON with `ok`, `no_op`, `reviews`, `imports`, `skipped`, `actionable_failures`, `ignored_count`, and `metrics`. Each `skipped` item contains only an optional memo ID and the bounded reason `not_work` or `removed`. Notifications and callers consume this structure and never parse model prose.
 
 Telemetry is JSONL and correlated by `run_id`. Each attempted memo emits a durable, schema-versioned `memo-metrics` event before the result file can be replaced by a later run. It may contain stage timestamps/durations, queue counts, memo IDs, transcript source/cache/character counts, retrieval counts, Codex usage, affected-file counts, commit SHAs, and provider request IDs. It must never contain command output, prompts, transcripts, note contents, audio, or credentials.
