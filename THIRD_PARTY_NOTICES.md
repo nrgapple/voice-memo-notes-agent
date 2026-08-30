@@ -28,3 +28,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## FluidAudio
+
+This project links [FluidAudio](https://github.com/FluidInference/FluidAudio)
+version `0.15.6` for local Core ML speaker diarization. FluidAudio is licensed
+under the Apache License, Version 2.0. The diarization model assets are
+downloaded from `FluidInference/speaker-diarization-coreml`; their upstream
+model and license metadata remain distributed with that repository.

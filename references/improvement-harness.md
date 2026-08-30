@@ -66,6 +66,7 @@ Review the local canary commit before accepting a semantic or retrieval change:
 - facts and decisions preserve the speaker's intent, and checkboxes appear only for explicitly stated tasks, requests, commitments, reminders, or next steps;
 - the routing phrase and raw transcript are absent;
 - additions are concise, fit surrounding structure, and use useful Foam links;
+- a multi-speaker canary creates one dated meeting note, preserves defensible speaker attribution, and adds a journal link without duplicating the meeting body;
 - no duplicate content or provenance marker exists elsewhere.
 
 A faster run with a worse destination or lossy summary is a regression. Low-confidence content should fall back to the journal.

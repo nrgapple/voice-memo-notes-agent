@@ -1,6 +1,6 @@
 # Setup
 
-`bootstrap.sh` installs a pinned, local copy of `jwulff/apple-voice-memo-mcp`, builds its TypeScript server and Swift Speech helper, builds the Voice Memo Agent, registers the MCP server, installs its LaunchAgent, clones the configured notes repository, and initializes local state. On first install, set `VOICE_MEMO_NOTES_REPOSITORY=owner/private-notes`. `VOICE_MEMO_NOTES_REPO_DIR` defaults to `~/Documents/VoiceMemoNotes`, and `VOICE_MEMO_NOTES_BRANCH` defaults to the GitHub repository's default branch. Upgrades reuse the repository path already installed in the LaunchAgent.
+`bootstrap.sh` installs a pinned, local copy of `jwulff/apple-voice-memo-mcp`, builds its TypeScript server and Swift Speech/diarization helper, prepares the local Core ML speaker models, builds the Voice Memo Agent, registers the MCP server, installs its LaunchAgent, clones the configured notes repository, and initializes local state. On first install, set `VOICE_MEMO_NOTES_REPOSITORY=owner/private-notes`. `VOICE_MEMO_NOTES_REPO_DIR` defaults to `~/Documents/VoiceMemoNotes`, and `VOICE_MEMO_NOTES_BRANCH` defaults to the GitHub repository's default branch. Upgrades reuse the repository path already installed in the LaunchAgent.
 
 Run bootstrap from a durable source checkout or the installed skill link. It refuses source paths under `~/.codex/worktrees/` because the LaunchAgent stores the coordinator's absolute path and must remain valid after Codex cleans up a temporary worktree.
 
@@ -10,6 +10,8 @@ Pinned dependency:
 - Git commit: `f34437f546f17c78989b6e1a248d452829e50754`
 - Local compatibility patch: reject null/empty audio paths without crashing memo listing and prefer the visible encrypted title over timestamp-like custom labels
 - Install root: `~/.codex/tools/apple-voice-memo-mcp`
+
+The Swift package also pins `FluidInference/FluidAudio` at `0.15.6`. Bootstrap downloads its Core ML diarization assets into the current user's FluidAudio application-support cache. Audio inference remains on the Mac; only a qualified, speaker-labeled transcript enters the existing Codex semantic step.
 
 Run:
 
@@ -24,7 +26,7 @@ Fresh state uses `publish_mode: review`, which pushes a unique branch for each m
 
 ## Permissions
 
-Grant Full Disk Access in System Settings to the ChatGPT/Codex desktop app, `/Applications/Voice Memo Agent.app`, and, if macOS still denies the MCP child process, `/opt/homebrew/bin/node`. Grant Accessibility access to `/Applications/Voice Memo Agent.app`; the agent uses and verifies Voice Memos' editable title control without writing the private database. The Speech helper uses Apple's on-device `SpeechAnalyzer` API on macOS 26, which does not send memo audio to Apple's servers or require the legacy `SFSpeechRecognizer` authorization prompt. Restart the desktop app after changing MCP configuration or privacy permissions.
+Grant Full Disk Access in System Settings to the ChatGPT/Codex desktop app, `/Applications/Voice Memo Agent.app`, and, if macOS still denies the MCP child process, `/opt/homebrew/bin/node`. Grant Accessibility access to `/Applications/Voice Memo Agent.app`; the agent uses and verifies Voice Memos' editable title control without writing the private database. The helper uses Apple's on-device `SpeechAnalyzer` API and local Core ML diarization on macOS 26; memo audio is not uploaded for either step, and the legacy `SFSpeechRecognizer` authorization prompt is not required. Restart the desktop app after changing MCP configuration or privacy permissions.
 
 After bootstrap, request the one-time rename permission with:
 

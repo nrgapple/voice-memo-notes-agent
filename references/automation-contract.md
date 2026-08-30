@@ -15,6 +15,8 @@ Each run must:
 - process no more than five memos, oldest first;
 - invoke Codex zero times unless a locally transcribed memo contains an exact configured work trigger;
 - invoke Codex once per qualified memo only for title generation and a structured contextual Markdown edit plan;
+- transcribe and diarize locally, classify two or more detected speakers as a meeting, and preserve generic labels when a speaker's identity is uncertain;
+- require each meeting plan to create one dated meeting note and add one authoritative journal wikilink to it;
 - mark recordings without a configured work trigger as ignored and return a privacy-safe skipped outcome;
 - assign each qualified recording a concise descriptive title and queue a best-effort Voice Memos rename;
 - make one commit per memo and push a unique review branch by default;

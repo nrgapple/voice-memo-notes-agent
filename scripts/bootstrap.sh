@@ -34,7 +34,7 @@ NPM_PATH="${NODE_BIN_DIR}/npm"
 PYTHON_PATH="$(command -v python3 || true)"
 PUSHOVER_CREDENTIALS_FILE="${VOICE_MEMO_PUSHOVER_CREDENTIALS_FILE:-${HOME}/.config/voice-memo-agent/pushover.json}"
 
-for command_name in codesign codex gh git jq launchctl openssl plutil python3 rg security shasum sqlite3 swiftc; do
+for command_name in codesign codex gh git jq launchctl openssl plutil python3 rg security shasum sqlite3 swift swiftc; do
   command -v "${command_name}" >/dev/null || {
     print -u2 "missing required command: ${command_name}"
     exit 1
@@ -157,13 +157,22 @@ cat > "${helper_plist}" <<'PLIST'
 </dict></plist>
 PLIST
 
-swiftc -parse-as-library -O \
-  "${SKILL_DIR}/scripts/VoiceMemoTranscriber.swift" \
-  -o "${helper_path}" \
+swift build \
+  --package-path "${SKILL_DIR}" \
+  -c release \
+  --product VoiceMemoTranscriber \
   -Xlinker -sectcreate \
   -Xlinker __TEXT \
   -Xlinker __info_plist \
   -Xlinker "${helper_plist}"
+helper_build_path="$(swift build --package-path "${SKILL_DIR}" -c release --show-bin-path)/VoiceMemoTranscriber"
+cp "${helper_build_path}" "${helper_path}"
+chmod 0755 "${helper_path}"
+if ! "${helper_path}" --diarization-status >/dev/null 2>&1; then
+  print "Preparing local speaker diarization models"
+  "${helper_path}" --prepare-diarization >/dev/null
+fi
+"${helper_path}" --diarization-status >/dev/null
 
 agent_fingerprint="$("${SKILL_DIR}/scripts/build_app.sh" --fingerprint)"
 if [[ -n "${VOICE_MEMO_SIGNING_IDENTITY:-}" ]]; then

@@ -40,7 +40,7 @@ check() {
   fi
 }
 
-for command_name in codesign codex gh git jq launchctl node npm openssl plutil python3 security shasum sqlite3 swiftc rg; do
+for command_name in codesign codex gh git jq launchctl node npm openssl plutil python3 security shasum sqlite3 swift swiftc rg; do
   check "command:${command_name}" command -v "${command_name}"
 done
 
@@ -81,6 +81,7 @@ check "node-native-abi" zsh -c "'${NODE_PATH}' -e \"import('${TOOL_DIR}/dist/ser
 check "speech-helper" test -x "${TOOL_DIR}/.codex-build/VoiceMemoTranscriber"
 check "speech-helper-metadata" zsh -c "otool -l '${TOOL_DIR}/.codex-build/VoiceMemoTranscriber' | rg -q '__info_plist'"
 check "speech-helper-cli" "${TOOL_DIR}/.codex-build/VoiceMemoTranscriber" --help
+check "speaker-diarization-models" "${TOOL_DIR}/.codex-build/VoiceMemoTranscriber" --diarization-status
 check "agent-binary" test -x "${AGENT_PATH}"
 check "agent-signature" codesign --verify --strict "${AGENT_APP}"
 agent_fingerprint="$("${SKILL_DIR}/scripts/build_app.sh" --fingerprint)"
