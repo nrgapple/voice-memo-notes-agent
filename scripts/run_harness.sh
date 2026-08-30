@@ -21,7 +21,7 @@ swiftc -typecheck scripts/VoiceMemoAgent.swift \
   -framework AppKit \
   -framework ApplicationServices \
   -framework CoreServices
-swiftc -parse-as-library -typecheck scripts/VoiceMemoTranscriber.swift
+swift build -c debug --product VoiceMemoTranscriber
 agent_test_binary="$(mktemp -t VoiceMemoAgent-tests)"
 trap 'rm -f "${agent_test_binary}"' EXIT
 swiftc scripts/VoiceMemoAgent.swift \

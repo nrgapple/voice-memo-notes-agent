@@ -40,7 +40,7 @@ def main() -> int:
     required = [
         "LICENSE", "README.md", "SECURITY.md", "CONTRIBUTING.md",
         "CHANGELOG.md", "CODE_OF_CONDUCT.md", "RELEASING.md",
-        "THIRD_PARTY_NOTICES.md",
+        "THIRD_PARTY_NOTICES.md", "Package.swift", "Package.resolved",
         "assets/README.md", "assets/VoiceMemoAgent.icon.png", "assets/VoiceMemoAgent.icns",
         "scripts/build_app.sh", "scripts/build_icon.sh", "scripts/build_release.sh",
     ]

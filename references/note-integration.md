@@ -23,6 +23,8 @@ Use the generated Voice Memos title as a retrieval label, not as evidence or man
 
 7. Use standard Foam `[[wikilinks]]` when linking related notes.
 
+When local diarization reports two or more speakers, the coordinator—not the semantic model—classifies the memo as a meeting. The plan must create exactly one `meetings/YYYY-MM-DD-<descriptive-slug>.md` note, put the provenance marker there, and append or create exactly one authoritative journal note containing a wikilink to the meeting note. Keep discussion, decisions, and owned action items in the meeting note rather than duplicating them in the journal. Speaker labels may be replaced by names only when the transcript and supplied vault context directly identify the person or make the mapping unambiguous; otherwise preserve the generic label. The required journal link is a valid graph connection for the meeting note, including when that day's journal must also be created.
+
 Treat the journal as a capture layer and the rest of the vault as an associative knowledge graph. A new non-journal note must never be orphaned: connect it directly to at least one existing eligible note, either with an outbound wikilink or an inbound link added to an existing candidate in the same plan. Every automated wikilink must resolve unambiguously to an existing eligible note or another note created in the same plan. Do not create speculative placeholders.
 
 Map, index, and MOC-style notes are navigation surfaces. Add a concise link when a new durable note materially belongs in one, but keep the substantive content in the atomic note and do not duplicate it into the map.

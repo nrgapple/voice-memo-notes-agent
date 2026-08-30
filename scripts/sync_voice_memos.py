@@ -69,6 +69,22 @@ class TranscriptResult:
     source: str
     cache_hit: bool
     duration_ms: int
+    segments: list[dict[str, Any]]
+    speaker_count: int
+
+    @property
+    def is_meeting(self) -> bool:
+        return self.speaker_count > 1
+
+    @property
+    def semantic_text(self) -> str:
+        if not self.is_meeting or not self.segments:
+            return self.text
+        return "\n".join(
+            f"{segment['speaker']}: {segment['text']}"
+            for segment in self.segments
+            if segment.get("text")
+        )
 
 
 @dataclass
@@ -488,9 +504,32 @@ class Coordinator:
 
     def transcript_for(self, memo: dict[str, Any], language: str) -> TranscriptResult:
         started = time.monotonic()
-        path = self.transcripts / f"{memo['id']}.txt"
+        path = self.transcripts / f"{memo['id']}.json"
+        legacy_path = self.transcripts / f"{memo['id']}.txt"
         if path.is_file() and path.stat().st_size:
-            cached = path.read_text(encoding="utf-8")
+            try:
+                cached = json.loads(path.read_text(encoding="utf-8"))
+                text = str(cached.get("text") or "").strip()
+                segments, speaker_count = self.normalize_speaker_segments(cached.get("segments"))
+            except (AttributeError, json.JSONDecodeError, OSError, TypeError, ValueError) as error:
+                raise SyncError("transcription", f"cached transcript is invalid: {error}", int(memo["id"])) from error
+            if not text:
+                raise SyncError("transcription", "cached transcript was empty", int(memo["id"]))
+            semantic_text = TranscriptResult(
+                text, "local-cache", True, 0, segments, speaker_count,
+            ).semantic_text
+            if max(len(text), len(semantic_text)) > self.transcript_max_characters:
+                raise SyncError(
+                    "transcription",
+                    f"cached transcript exceeds configured character limit ({max(len(text), len(semantic_text))} > {self.transcript_max_characters})",
+                    int(memo["id"]),
+                )
+            return TranscriptResult(
+                text, "local-cache", True,
+                round((time.monotonic() - started) * 1000), segments, speaker_count,
+            )
+        if legacy_path.is_file() and legacy_path.stat().st_size:
+            cached = legacy_path.read_text(encoding="utf-8").strip()
             if len(cached) > self.transcript_max_characters:
                 raise SyncError(
                     "transcription",
@@ -498,8 +537,8 @@ class Coordinator:
                     int(memo["id"]),
                 )
             return TranscriptResult(
-                cached, "local-cache", True,
-                round((time.monotonic() - started) * 1000),
+                cached, "legacy-local-cache", True,
+                round((time.monotonic() - started) * 1000), [], 1,
             )
         try:
             payload = self.voice("transcript", "--id", str(memo["id"]), "--language", language)
@@ -516,20 +555,60 @@ class Coordinator:
         text = payload.get("text", "").strip()
         if not text:
             raise SyncError("transcription", "transcription was empty", int(memo["id"]))
-        if len(text) > self.transcript_max_characters:
+        segments, speaker_count = self.normalize_speaker_segments(payload.get("segments"))
+        result = TranscriptResult(
+            text, str(payload.get("source") or "apple-speech"), False, 0, segments, speaker_count,
+        )
+        if max(len(text), len(result.semantic_text)) > self.transcript_max_characters:
             raise SyncError(
                 "transcription",
-                f"transcript exceeds configured character limit ({len(text)} > {self.transcript_max_characters})",
+                f"transcript exceeds configured character limit ({max(len(text), len(result.semantic_text))} > {self.transcript_max_characters})",
                 int(memo["id"]),
             )
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(f".tmp-{os.getpid()}")
-        temp.write_text(text + "\n", encoding="utf-8")
+        temp.write_text(json.dumps({
+            "schema_version": 2,
+            "text": text,
+            "source": result.source,
+            "segments": segments,
+            "speaker_count": speaker_count,
+        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(temp, path)
         return TranscriptResult(
-            text, str(payload.get("source") or "apple-speech"), False,
-            round((time.monotonic() - started) * 1000),
+            text, result.source, False,
+            round((time.monotonic() - started) * 1000), segments, speaker_count,
         )
+
+    @staticmethod
+    def normalize_speaker_segments(value: Any) -> tuple[list[dict[str, Any]], int]:
+        if not isinstance(value, list):
+            return [], 1
+        labels: dict[str, str] = {}
+        normalized: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
+            raw_speaker = str(item.get("speaker") or "").strip()
+            if not text or not raw_speaker:
+                continue
+            if raw_speaker not in labels:
+                labels[raw_speaker] = f"Speaker {len(labels) + 1}"
+            try:
+                start = max(0.0, float(item.get("start") or 0))
+                end = max(start, float(item.get("end") or start))
+            except (TypeError, ValueError):
+                start = end = 0.0
+            segment = {"speaker": labels[raw_speaker], "text": text, "start": start, "end": end}
+            if normalized and normalized[-1]["speaker"] == segment["speaker"]:
+                normalized[-1]["text"] = f"{normalized[-1]['text']} {text}".strip()
+                normalized[-1]["end"] = max(float(normalized[-1]["end"]), end)
+            else:
+                normalized.append(segment)
+        if len(labels) < 2:
+            return normalized, 1
+        return normalized, len(labels)
 
     def retry_renames(self, limit: int) -> None:
         for item in self.state("rename-pending", "--limit", str(limit)):
@@ -760,15 +839,30 @@ class Coordinator:
         journal_date: str,
         candidates: CandidateContext,
         existing_title: str | None,
+        is_meeting: bool,
+        speaker_count: int,
     ) -> str:
         title_rule = f"Reuse this interrupted-run title exactly: {existing_title}" if existing_title else (
             "Create a specific 3-8 word title (maximum 60 characters). Omit routing phrases, filler, and generic labels."
         )
+        meeting_rules = ""
+        if is_meeting:
+            meeting_rules = f"""
+
+This recording has been deterministically classified as a meeting because local diarization found {speaker_count} speakers. Meeting routing is mandatory:
+- create exactly one new meeting note at `meetings/{journal_date}-<descriptive-slug>.md`;
+- put the provenance marker in that meeting note;
+- structure the meeting note with a title, date, participants, concise discussion notes, decisions, and only explicitly owned action items when present;
+- create or append to exactly one authoritative `journal/{journal_date}*.md` note with a concise `[[wikilink]]` to the meeting note; do not duplicate the meeting summary in the journal;
+- use the supplied generic speaker labels as participant names unless the transcript and supplied vault context directly identify a person or make the mapping unambiguous. Never guess a person's identity from a weak clue. It is acceptable and preferred to keep `Speaker 1`, `Speaker 2`, and so on when uncertain;
+- preserve who said or committed to what. Do not transfer one participant's statement or task to another participant.
+"""
         prompt = f"""You are a planning step inside a deterministic Voice Memo importer. You have no vault access and must not use tools. Return only the supplied JSON schema.
 
 {title_rule}
 
 Plan concise Markdown additions containing facts, decisions, ideas, and only explicitly stated actionable tasks. Do not paste the raw transcript. Never turn a preference, uncertainty, expectation, observation, or implied possibility into a checkbox or follow-up. Add an action item only when the speaker explicitly states a task, request, commitment, reminder, or next step; do not invent actions such as confirming, checking, scheduling, or following up. The routing phrase `{matched_phrase}` is metadata and must be omitted unless independently meaningful. Use `{journal_date}` as the authoritative journal date; never create a weekend journal. Include exactly one marker across all edits: `<!-- voice-memo-id:{memo['id']} -->`.
+{meeting_rules}
 
 Treat this Foam vault as a linked thinking graph, not a filing cabinet:
 - prefer an existing person, project, decision, meeting, or concept note when the memo extends that subject;
@@ -785,8 +879,10 @@ Memo metadata:
 - current title: {memo.get('title', '')}
 - recorded at: {memo.get('date', '')}
 - journal date: {journal_date}
+- memo type: {'meeting' if is_meeting else 'voice note'}
+- detected speakers: {speaker_count}
 
-Qualified transcript:
+Qualified {'speaker-separated meeting transcript' if is_meeting else 'transcript'}:
 <transcript>
 {transcript}
 </transcript>
@@ -906,13 +1002,31 @@ Candidate graph context (resolved Foam links only):
         candidates: CandidateContext,
         journal_date: str,
         memo_id: int,
+        is_meeting: bool,
     ) -> list[str]:
         edits = output.get("edits") or []
         if not 1 <= len(edits) <= 5:
             raise SyncError("validation", "semantic plan must contain 1-5 edits", memo_id)
         allowed_existing = set(candidates.paths)
         journal_pattern = re.compile(rf"^journal/{re.escape(journal_date)}(?:-[^/]+)?\.md$")
-        if output.get("confidence") == "low" and any(not journal_pattern.match(str(edit.get("path") or "")) for edit in edits):
+        meeting_pattern = re.compile(rf"^meetings/{re.escape(journal_date)}-[A-Za-z0-9][A-Za-z0-9_ -]*\.md$")
+        meeting_path: str | None = None
+        if is_meeting:
+            meeting_edits = [
+                edit for edit in edits
+                if str(edit.get("mode") or "") == "create"
+                and meeting_pattern.match(str(edit.get("path") or ""))
+            ]
+            journal_edits = [edit for edit in edits if journal_pattern.match(str(edit.get("path") or ""))]
+            if len(meeting_edits) != 1:
+                raise SyncError("validation", "meeting plans must create exactly one dated meeting note", memo_id)
+            if len(journal_edits) != 1:
+                raise SyncError("validation", "meeting plans must update exactly one authoritative journal", memo_id)
+            meeting_path = str(meeting_edits[0].get("path") or "")
+            marker = f"<!-- voice-memo-id:{memo_id} -->"
+            if marker not in str(meeting_edits[0].get("content") or ""):
+                raise SyncError("validation", "meeting provenance marker must be in the meeting note", memo_id)
+        if not is_meeting and output.get("confidence") == "low" and any(not journal_pattern.match(str(edit.get("path") or "")) for edit in edits):
             raise SyncError("validation", "low-confidence semantic plans may only target the journal", memo_id)
         existing_paths: set[str] = set()
         for path in worktree.rglob("*.md"):
@@ -932,6 +1046,14 @@ Candidate graph context (resolved Foam links only):
                 if resolved is None:
                     raise SyncError("validation", f"unresolved or ambiguous Foam wikilink: {target}", memo_id)
                 resolved_by_edit[relative].append(resolved)
+        if is_meeting and meeting_path:
+            journal_links_meeting = any(
+                meeting_path in resolved_by_edit.get(str(edit.get("path") or ""), [])
+                for edit in edits
+                if journal_pattern.match(str(edit.get("path") or ""))
+            )
+            if not journal_links_meeting:
+                raise SyncError("validation", "meeting note must be linked from the authoritative journal", memo_id)
         for edit in edits:
             relative = str(edit.get("path") or "")
             if str(edit.get("mode") or "") != "create" or journal_pattern.match(relative):
@@ -942,7 +1064,14 @@ Candidate graph context (resolved Foam links only):
                 and relative in resolved_by_edit.get(str(source.get("path") or ""), [])
                 for source in edits
             )
-            if not links_existing and not linked_from_existing:
+            linked_from_journal = bool(
+                is_meeting and relative == meeting_path and any(
+                    journal_pattern.match(str(source.get("path") or ""))
+                    and relative in resolved_by_edit.get(str(source.get("path") or ""), [])
+                    for source in edits
+                )
+            )
+            if not links_existing and not linked_from_existing and not linked_from_journal:
                 raise SyncError("validation", f"new durable note would be orphaned: {relative}", memo_id)
         changed: list[str] = []
         for edit in edits:
@@ -990,7 +1119,7 @@ Candidate graph context (resolved Foam links only):
     def process_qualified(
         self,
         memo: dict[str, Any],
-        transcript: str,
+        transcript: TranscriptResult,
         matched_phrase: str,
         journal_date: str,
         record: dict[str, Any],
@@ -1008,7 +1137,7 @@ Candidate graph context (resolved Foam links only):
             memo_metrics["git_prepare_ms"] = round((time.monotonic() - git_started) * 1000)
             retrieval_started = time.monotonic()
             candidates = self.candidate_notes(
-                transcript,
+                transcript.text,
                 journal_date,
                 int(config["candidate_file_limit"]),
                 int(config["candidate_excerpt_characters"]),
@@ -1022,7 +1151,10 @@ Candidate graph context (resolved Foam links only):
             existing_title = record.get("rename_target")
             self.demo_progress("drafting")
             output, codex_metrics = self.call_codex(
-                self.semantic_prompt(memo, transcript, matched_phrase, journal_date, candidates, existing_title),
+                self.semantic_prompt(
+                    memo, transcript.semantic_text, matched_phrase, journal_date, candidates,
+                    existing_title, transcript.is_meeting, transcript.speaker_count,
+                ),
                 memo_id,
             )
             memo_metrics["codex"] = codex_metrics
@@ -1042,7 +1174,9 @@ Candidate graph context (resolved Foam links only):
             if collision:
                 raise SyncError("validation", f"generated title belongs to memo {collision['id']}", memo_id)
 
-            changed = self.apply_plan(worktree, output, candidates, journal_date, memo_id)
+            changed = self.apply_plan(
+                worktree, output, candidates, journal_date, memo_id, transcript.is_meeting,
+            )
             if self.changed_files(worktree) != changed:
                 raise SyncError("validation", "applied edit plan did not match the resulting diff", memo_id)
             self.state("rename-queue", "--id", str(memo_id), "--title", title, "--original-title", str(memo.get("title") or ""))
@@ -1333,7 +1467,9 @@ Candidate graph context (resolved Foam links only):
                         "cache_hit": transcript_result.cache_hit,
                         "duration_ms": transcript_result.duration_ms,
                         "characters": len(transcript_result.text),
+                        "speaker_count": transcript_result.speaker_count,
                     }
+                    memo_metrics["memo_type"] = "meeting" if transcript_result.is_meeting else "voice-note"
                     qualification_started = time.monotonic()
                     matched = find_matching_phrase(transcript_result.text, config["required_trigger_phrases"])
                     memo_metrics["qualification_ms"] = round((time.monotonic() - qualification_started) * 1000)
@@ -1348,7 +1484,7 @@ Candidate graph context (resolved Foam links only):
                     recorded_date = parse_recorded_at(str(memo["date"]))
                     journal_date = resolve_journal_date(recorded_date).isoformat()
                     outcome = self.process_qualified(
-                        memo, transcript_result.text, matched, journal_date, record, config, memo_metrics,
+                        memo, transcript_result, matched, journal_date, record, config, memo_metrics,
                     )
                 except MemoUnavailable:
                     self.state(

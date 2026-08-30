@@ -47,17 +47,31 @@ try {
       process.stdout.write(`${JSON.stringify(memo)}\n`);
     } else {
       const { TranscriptExtractor } = await load("services/transcript-extractor.js");
-      const embedded = new TranscriptExtractor().extractTranscript(memo.path, "text");
-      if (embedded?.text?.trim()) {
-        process.stdout.write(`${JSON.stringify({ id, source: "embedded", text: embedded.text.trim(), locale: embedded.locale })}\n`);
+      const embedded = new TranscriptExtractor().extractTranscript(memo.path, "json");
+      const { TranscriptionService } = await load("services/transcription-service.js");
+      const helper = process.env.VOICE_MEMO_TRANSCRIBER_PATH || join(toolRoot, ".codex-build", "VoiceMemoTranscriber");
+      const result = await new TranscriptionService(helper).transcribe(memo.path, option("--language", "en-US"));
+      if (result.success && result.transcript?.trim()) {
+        const segments = Array.isArray(result.segments) ? result.segments : [];
+        const speakers = new Set(segments.map((segment) => segment?.speaker).filter(Boolean));
+        process.stdout.write(`${JSON.stringify({
+          id,
+          source: "apple-speech-diarized",
+          text: result.transcript.trim(),
+          segments,
+          speaker_count: Math.max(1, speakers.size),
+        })}\n`);
+      } else if (embedded?.text?.trim()) {
+        process.stdout.write(`${JSON.stringify({
+          id,
+          source: "embedded-fallback",
+          text: embedded.text.trim(),
+          segments: embedded.segments || [],
+          speaker_count: 1,
+          locale: embedded.locale,
+        })}\n`);
       } else {
-        const { TranscriptionService } = await load("services/transcription-service.js");
-        const helper = process.env.VOICE_MEMO_TRANSCRIBER_PATH || join(toolRoot, ".codex-build", "VoiceMemoTranscriber");
-        const result = await new TranscriptionService(helper).transcribe(memo.path, option("--language", "en-US"));
-        if (!result.success || !result.transcript?.trim()) {
-          fail(result.error || `Voice Memo ${id} produced an empty transcript`, 4);
-        }
-        process.stdout.write(`${JSON.stringify({ id, source: "apple-speech", text: result.transcript.trim() })}\n`);
+        fail(result.error || `Voice Memo ${id} produced an empty transcript`, 4);
       }
     }
   }

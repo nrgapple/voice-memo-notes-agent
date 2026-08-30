@@ -344,7 +344,12 @@ class SyncCoordinatorTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def write_voice(self, transcript: str, include_new: bool = True):
+    def write_voice(
+        self,
+        transcript: str,
+        include_new: bool = True,
+        segments: list[dict] | None = None,
+    ):
         memos = [{
             "id": 1,
             "title": "Baseline",
@@ -363,12 +368,13 @@ class SyncCoordinatorTests(unittest.TestCase):
         source = f"""#!/usr/bin/env node
 const memos = {json.dumps(memos)};
 const transcript = {json.dumps(transcript)};
+const segments = {json.dumps(segments or [])};
 const command = process.argv[2];
 const idIndex = process.argv.indexOf('--id');
 const id = idIndex >= 0 ? Number(process.argv[idIndex + 1]) : null;
 if (command === 'list') console.log(JSON.stringify({{memos, total: memos.length}}));
 else if (command === 'get') console.log(JSON.stringify(memos.find(memo => memo.id === id)));
-else if (command === 'transcript') console.log(JSON.stringify({{id, source: 'fixture', text: transcript}}));
+else if (command === 'transcript') console.log(JSON.stringify({{id, source: 'fixture', text: transcript, segments}}));
 else process.exit(2);
 """
         self.voice_cli.write_text(source, encoding="utf-8")
@@ -416,6 +422,7 @@ if (command === 'list') {{
         content: str = "## Purchaser review\n- Review sandbox purchaser accounts.\n<!-- voice-memo-id:2 -->",
         mode: str = "append",
         delay_seconds: float = 0,
+        edits: list[dict] | None = None,
     ):
         conflict = ""
         if push_conflict:
@@ -429,6 +436,7 @@ subprocess.run(['git', '-C', str(conflict), 'add', 'remote.md'], check=True)
 subprocess.run(['git', '-C', str(conflict), 'commit', '-qm', 'Concurrent update'], check=True)
 subprocess.run(['git', '-C', str(conflict), 'push', '-q', 'origin', 'master'], check=True)
 """
+        planned_edits = edits or [{"path": target_path, "mode": mode, "content": content}]
         source = f"""#!/usr/bin/env python3
 import json
 import subprocess
@@ -448,11 +456,7 @@ output.write_text(json.dumps({{
     'summary': 'Added the account review task.',
     'confidence': {confidence!r},
     'placement_reason': 'The existing purchaser project is directly relevant.',
-    'edits': [{{
-        'path': {target_path!r},
-        'mode': {mode!r},
-        'content': {content!r},
-    }}],
+    'edits': {planned_edits!r},
 }}), encoding='utf-8')
 print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'output_tokens': 100, 'total_tokens': 0}}}}))
 """
@@ -527,6 +531,8 @@ print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'ou
         first = json.loads(self.sync().stdout)
         self.assertTrue(first["ok"])
         self.assertEqual(first["metrics"]["codex_calls"], 1)
+        self.assertEqual(first["metrics"]["memos"][0]["memo_type"], "voice-note")
+        self.assertEqual(first["metrics"]["memos"][0]["transcription"]["speaker_count"], 1)
         self.assertEqual(first["metrics"]["memos"][0]["codex"]["total_tokens"], 1000)
         self.assertIn("T", first["metrics"]["memos"][0]["recording_ended_at"])
         self.assertGreaterEqual(first["metrics"]["memos"][0]["retrieval"]["candidate_files"], 2)
@@ -584,6 +590,120 @@ print(json.dumps({{'type': 'turn.completed', 'usage': {{'input_tokens': 900, 'ou
             "--run-id", first["run_id"], "--max-codex-ms", "1", check=False,
         )
         self.assertEqual(failed_gate.returncode, 3)
+
+    def test_multiple_speakers_create_meeting_note_and_journal_link(self):
+        transcript = (
+            "Work note. I'm Nina. Let's review the purchaser sandbox launch. "
+            "I will send the test plan. Great, and I will approve it tomorrow."
+        )
+        self.write_voice(transcript, segments=[
+            {
+                "speaker": "cluster-a",
+                "text": "Work note. I'm Nina. Let's review the purchaser sandbox launch. I will send the test plan.",
+                "start": 0.0,
+                "end": 7.2,
+            },
+            {
+                "speaker": "cluster-b",
+                "text": "Great, and I will approve it tomorrow.",
+                "start": 7.2,
+                "end": 11.0,
+            },
+        ])
+        meeting_path = "meetings/2026-08-03-purchaser-sandbox-launch.md"
+        self.write_codex(
+            title="Purchaser Sandbox Launch Meeting",
+            edits=[
+                {
+                    "path": meeting_path,
+                    "mode": "create",
+                    "content": (
+                        "# Purchaser Sandbox Launch\n\n"
+                        "Date: 2026-08-03\n\n"
+                        "## Participants\n- Nina\n- Speaker 2\n\n"
+                        "## Discussion\n- Reviewed the purchaser sandbox launch.\n\n"
+                        "## Actions\n- [ ] Nina will send the test plan.\n"
+                        "- [ ] Speaker 2 will approve it tomorrow.\n\n"
+                        "<!-- voice-memo-id:2 -->"
+                    ),
+                },
+                {
+                    "path": "journal/2026-08-03-Monday.md",
+                    "mode": "append",
+                    "content": "- Meeting: [[meetings/2026-08-03-purchaser-sandbox-launch|Purchaser Sandbox Launch]]",
+                },
+            ],
+        )
+
+        result = json.loads(self.sync().stdout)
+
+        self.assertEqual(result["actionable_failures"], [])
+        self.assertEqual(
+            result["imports"][0]["affected_notes"],
+            ["journal/2026-08-03-Monday.md", meeting_path],
+        )
+        metrics = result["metrics"]["memos"][0]
+        self.assertEqual(metrics["memo_type"], "meeting")
+        self.assertEqual(metrics["transcription"]["speaker_count"], 2)
+        cached = json.loads(
+            (self.repo / ".voice-memo-automation/transcripts/2.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(cached["speaker_count"], 2)
+        self.assertEqual([segment["speaker"] for segment in cached["segments"]], ["Speaker 1", "Speaker 2"])
+        prompt = (self.root / "semantic-prompt.txt").read_text(encoding="utf-8")
+        self.assertIn("deterministically classified as a meeting", prompt)
+        self.assertIn("Speaker 1: Work note. I'm Nina", prompt)
+        self.assertIn("Speaker 2: Great, and I will approve it tomorrow.", prompt)
+        self.assertIn("Never guess a person's identity from a weak clue", prompt)
+        self.assertIn("- Nina", (self.repo / meeting_path).read_text(encoding="utf-8"))
+        self.assertIn(
+            "[[meetings/2026-08-03-purchaser-sandbox-launch|Purchaser Sandbox Launch]]",
+            (self.repo / "journal/2026-08-03-Monday.md").read_text(encoding="utf-8"),
+        )
+
+    def test_multiple_speakers_cannot_be_routed_as_an_ordinary_note(self):
+        self.write_voice(
+            "Work note. Let's review the purchaser sandbox. Yes, let's do that.",
+            segments=[
+                {"speaker": "one", "text": "Work note. Let's review the purchaser sandbox.", "start": 0, "end": 4},
+                {"speaker": "two", "text": "Yes, let's do that.", "start": 4, "end": 6},
+            ],
+        )
+
+        result = json.loads(self.sync().stdout)
+
+        self.assertEqual(result["imports"], [])
+        self.assertEqual(result["actionable_failures"][0]["stage"], "validation")
+        self.assertIn("meeting plans must create exactly one dated meeting note", self.record(2)["last_error"])
+
+    def test_meeting_note_requires_authoritative_journal_link(self):
+        self.write_voice(
+            "Work note. Let's review the purchaser sandbox. Yes, let's do that.",
+            segments=[
+                {"speaker": "one", "text": "Work note. Let's review the purchaser sandbox.", "start": 0, "end": 4},
+                {"speaker": "two", "text": "Yes, let's do that.", "start": 4, "end": 6},
+            ],
+        )
+        self.write_codex(
+            title="Purchaser Sandbox Meeting",
+            edits=[
+                {
+                    "path": "meetings/2026-08-03-purchaser-sandbox.md",
+                    "mode": "create",
+                    "content": "# Purchaser Sandbox\n\n## Participants\n- Speaker 1\n- Speaker 2\n\n<!-- voice-memo-id:2 -->",
+                },
+                {
+                    "path": "journal/2026-08-03-Monday.md",
+                    "mode": "append",
+                    "content": "- Purchaser sandbox meeting occurred.",
+                },
+            ],
+        )
+
+        result = json.loads(self.sync().stdout)
+
+        self.assertEqual(result["imports"], [])
+        self.assertIn("meeting note must be linked from the authoritative journal", self.record(2)["last_error"])
 
     def test_review_mode_waits_for_merge_then_recovers_without_second_codex_call(self):
         config_path = self.repo / ".voice-memo-automation/config.json"

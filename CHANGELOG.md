@@ -4,6 +4,8 @@ All notable changes are documented here. The project follows Semantic Versioning
 
 ## Unreleased
 
+- Add local Core ML speaker diarization, speaker-aware transcript caching, and deterministic meeting classification.
+- Require multi-speaker memos to create a dated meeting note with cautious participant naming and an authoritative journal link.
 - Reject ephemeral Codex worktrees when installing the persistent LaunchAgent.
 - Fail missing notes checkouts before creating automation state, with a specific Git-preflight diagnostic.
 - Verify that the installed sync coordinator exists at a durable path during doctor checks.

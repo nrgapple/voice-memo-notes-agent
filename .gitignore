@@ -11,6 +11,7 @@
 *.p12
 *.pem
 .codex-build/
+.build/
 .voice-memo-automation/
 Voice Memo Agent.app/
 node_modules/

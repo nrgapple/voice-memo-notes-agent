@@ -12,7 +12,7 @@ Include the affected version or commit, impact, reproduction steps using synthet
 
 ## Security boundaries
 
-- Audio and transcription happen locally before qualification.
+- Audio transcription and speaker diarization happen locally before qualification.
 - A qualified transcript and capped note context are sent to Codex for one structured planning call.
 - Codex runs ephemerally in a tiny read-only workspace with user rules and MCP configuration disabled.
 - Deterministic code validates paths, links, additive changes, provenance, Git state, and publication.

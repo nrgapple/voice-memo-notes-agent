@@ -22,7 +22,7 @@ flowchart LR
     B -->|"new .m4a event"| C["Locally signed Voice Memo Agent"]
     C --> D["Deterministic sync CLI"]
     D --> E["Read-only Voice Memos adapter"]
-    E --> F["Embedded transcript or Apple Speech"]
+    E --> F["Apple Speech + local speaker diarization"]
     F --> G{"Exact work trigger found?"}
     G -->|"No"| H["Mark ignored locally"]
     G -->|"Yes"| I["Vault map + candidate retrieval"]
@@ -40,7 +40,9 @@ flowchart LR
 
 - Watches the iCloud-synced Voice Memos recording directory with FSEvents.
 - Debounces arrivals and queues one follow-up when a memo appears during a run.
-- Uses an embedded Apple transcript when available, then falls back to Apple's on-device `SpeechAnalyzer`.
+- Uses Apple's on-device `SpeechAnalyzer` with word timing and a pinned FluidAudio/Core ML model to label speaker turns locally. If the helper fails, an embedded Apple transcript remains available as a single-speaker fallback.
+- Classifies recordings with two or more detected speakers as meetings, requires a dated meeting note under `meetings/`, and requires a Foam wikilink to that note in the authoritative journal.
+- Lets the constrained semantic step resolve a generic speaker label to a person's name only when the transcript provides strong contextual evidence; otherwise it keeps `Speaker 1`, `Speaker 2`, and so on.
 - Imports only memos containing a configured opt-in work phrase with token-boundary matching.
 - Avoids any Codex call for no-op, baseline, ignored, lease-blocked, and rename-only runs.
 - Gives Codex one constrained semantic planning call in a tiny read-only workspace, including resolved link and backlink context for candidate notes.
@@ -63,7 +65,7 @@ flowchart LR
 - Git, GitHub CLI, Node.js 18+, npm, Swift, Python 3.9+, `jq`, `rg`, and SQLite
 - A dedicated private GitHub notes repository with a checked-out default branch
 
-The bootstrap pins [`apple-voice-memo-mcp`](https://github.com/jwulff/apple-voice-memo-mcp) to Git commit `f34437f546f17c78989b6e1a248d452829e50754` (whose package manifest is `0.1.0`), plus the compatibility patch stored in this repository.
+The bootstrap pins [`apple-voice-memo-mcp`](https://github.com/jwulff/apple-voice-memo-mcp) to Git commit `f34437f546f17c78989b6e1a248d452829e50754` (whose package manifest is `0.1.0`), plus the compatibility patch stored in this repository. It also pins [FluidAudio](https://github.com/FluidInference/FluidAudio) `0.15.6` and prepares its local Core ML diarization models.
 
 ## Builds
 
@@ -89,7 +91,7 @@ export VOICE_MEMO_NOTES_BRANCH="main"
 ./scripts/doctor.sh
 ```
 
-The notes repository is intentionally required on first install; the project contains no personal vault default. Bootstrap is idempotent and reuses the repository path from an existing LaunchAgent during upgrades. It builds and locally signs `/Applications/Voice Memo Agent.app`, registers the pinned MCP server, prepares the notes checkout, initializes local state, and installs `~/Library/LaunchAgents/com.nrgapple.VoiceMemoAgent.plist`. Advanced source-only deployments may provide `VOICE_MEMO_SIGNING_IDENTITY` instead of creating the local identity.
+The notes repository is intentionally required on first install; the project contains no personal vault default. Bootstrap is idempotent and reuses the repository path from an existing LaunchAgent during upgrades. It builds and locally signs `/Applications/Voice Memo Agent.app`, downloads and prepares the local speaker-diarization models, registers the pinned MCP server, prepares the notes checkout, initializes local state, and installs `~/Library/LaunchAgents/com.nrgapple.VoiceMemoAgent.plist`. Advanced source-only deployments may provide `VOICE_MEMO_SIGNING_IDENTITY` instead of creating the local identity.
 
 Run bootstrap from the durable checkout (or its installed skill link), never from a temporary Codex worktree. The installed LaunchAgent intentionally keeps an absolute path to the sync coordinator so a temporary worktree would make the service fragile.
 
